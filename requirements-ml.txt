@@ -1,0 +1,3 @@
+# 분할 모델 추론·학습 (YOLOv8-seg). 서버에서 추론할 때도 필요
+-r requirements.txt
+ultralytics>=8.3

@@ -1,0 +1,9 @@
+# YOLOv8-seg 데이터셋 설정. 클래스 순서는 pipeline/schema.py MaskClass - 1 과 같아야 함
+path: ../datasets/tactile   # 레포에 올리지 않음
+train: images/train
+val: images/val
+names:
+  0: linear      # 선형 블록
+  1: dot         # 점형 블록
+  2: crosswalk
+  3: road

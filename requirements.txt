@@ -1,0 +1,10 @@
+# 서비스 + 판정 파이프라인 (학습 없이 실행 가능)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+numpy>=1.26
+opencv-python-headless>=4.10
+scikit-image>=0.26  # remove_small_objects(max_size=) 사용
+networkx>=3.3
+supabase>=2.5

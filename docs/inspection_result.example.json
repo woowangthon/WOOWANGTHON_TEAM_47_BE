@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1.0",
+  "inspection_id": "example",
+  "overall": "suspected",
+  "findings": [
+    {
+      "code": "M3",
+      "verdict": "suspected",
+      "photo": "close",
+      "message": "꺾임점이 점형이 아님",
+      "location": {
+        "x": 205.0,
+        "y": 252.0
+      },
+      "clause": null,
+      "suggestion": "꺾임·분기 지점의 블록을 점형으로 교체",
+      "confidence": 0.7,
+      "primary": true
+    }
+  ],
+  "close": null,
+  "wide": null
+}
