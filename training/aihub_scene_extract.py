@@ -173,7 +173,7 @@ def main() -> None:
         wr.writeheader()
         wr.writerows(rows)
     (args.out / "data.yaml").write_text(
-        "path: .\ntrain: images/train\nval: images/val\nnames:\n"
+        "train: images/train\nval: images/val\nnames:\n"
         + "".join(f"  {i}: {n}\n" for i, n in enumerate(NAMES)))
     make_check(args.out, rows, args.n_check)
 
