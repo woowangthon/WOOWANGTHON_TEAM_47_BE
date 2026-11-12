@@ -110,6 +110,10 @@ def main() -> None:
     ap.add_argument("--min-points", type=int, default=5, help="블록 폴리곤 최소 꼭짓점 수 (4점 사각형 제외)")
     ap.add_argument("--with-damage", action="store_true", help="불량부분 폴리곤도 `damage` 클래스로 포함")
     ap.add_argument("--seed", type=int, default=47)
+    ap.add_argument("--exclude", type=Path, action="append", default=[],
+                    help="이미 뽑은 사진 파일명 목록(.txt, 한 줄에 하나). 여러 번 지정 가능")
+    ap.add_argument("--used-out", type=Path, default=None,
+                    help="이번에 뽑은 파일명 목록을 저장할 경로 (다음 --exclude 용)")
     ap.add_argument("--out", type=Path, default=ROOT / "datasets" / "aihub_candidates")
     args = ap.parse_args()
 
@@ -118,7 +122,16 @@ def main() -> None:
 
     zl, zi = open_zip(LABEL_ZIP), open_zip(IMAGE_ZIP)
     items = load_labels(zl)
+    excluded = set()
+    for p in args.exclude:
+        excluded |= {line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()}
+    if excluded:
+        before = len(items)
+        items = [it for it in items if it["filename"] not in excluded]
+        print(f"제외 목록 {len(excluded)}개 → 후보 {before} → {len(items)}")
     chosen = pick(items, args.n, args.min_points, args.seed)
+    if args.used_out:
+        args.used_out.write_text("\n".join(sorted(c["filename"] for c in chosen)) + "\n", encoding="utf-8")
     idx = image_index(zi)
     print(f"점자블럭 JSON {len(items)}개 중 {len(chosen)}장 선택 "
           f"(묶음 {len({c['group'] for c in chosen})}개)")
