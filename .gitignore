@@ -17,6 +17,7 @@ venv/
 !weights/*_best.pt
 # 데이터: AI Hub 재배포 금지, 촬영 원본에 얼굴·번호판 포함 가능
 data/
+_data/
 datasets/
 runs/
 *.zip
