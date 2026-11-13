@@ -23,13 +23,25 @@ def check_h1(p: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
                     message="블록 인식 신뢰도가 낮음 (가림·그림자). 다시 촬영해 주세요", confidence=c)]
 
 
-def check_h3(wide: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
-    """횡단보도가 사진에 없음 → C 계열 보류, M만 진행."""
+def has_class(wide: PhotoAnalysis, name: str, cfg: HoldConfig) -> bool:
     s = wide.segmentation
-    if s.class_area_px.get("crosswalk", 0) >= cfg.min_crosswalk_ratio * s.width * s.height:
+    return s.class_area_px.get(name, 0) >= cfg.min_crosswalk_ratio * s.width * s.height
+
+
+def check_h3(wide: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
+    """횡단보도·차도가 모두 없음 → C 계열 전체 보류, M만 진행."""
+    if has_class(wide, "crosswalk", cfg) or has_class(wide, "road", cfg):
         return []
     return [Finding(code="H3", verdict=Verdict.HOLD, photo=PhotoKind.WIDE,
-                    message="넓은 사진에 횡단보도가 보이지 않음. 3~5m 뒤에서 횡단보도가 함께 나오게 찍어 주세요")]
+                    message="넓은 사진에 횡단보도·차도가 보이지 않음. 3~5m 뒤에서 횡단보도가 함께 나오게 찍어 주세요")]
+
+
+def check_h3_partial(wide: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
+    """차도는 있고 횡단보도만 없음 → C2만 판정, C1·C3·C4 보류."""
+    if has_class(wide, "crosswalk", cfg):
+        return []
+    return [Finding(code="H3", verdict=Verdict.HOLD, photo=PhotoKind.WIDE,
+                    message="횡단보도가 보이지 않아 연결 판정(C1·C3·C4) 보류. 차도 직진(C2)만 확인함")]
 
 
 def check_h2(wide: PhotoAnalysis) -> list[Finding]:

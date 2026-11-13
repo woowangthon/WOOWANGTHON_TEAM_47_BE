@@ -3,7 +3,7 @@
 각 함수는 (label, expected) 를 돌려준다. label 값은 MaskClass.
 블록 폭 기본 30px ≒ 실제 블록 한 줄.
 
-TODO(B): 옆 횡단보도(C3), 차도 직진(C2), 진입부 점형 누락(C4), 끊김(M4) 장면 추가.
+TODO: 진입부 점형 누락(C4), 끊김(M4) 장면 추가.
 """
 
 from __future__ import annotations
@@ -67,3 +67,44 @@ def approach_crosswalk(with_road: bool = True) -> tuple[np.ndarray, dict]:
     _line(lab, (320, 620), (320, 250), MaskClass.LINEAR)
     lab[200:260, 260:380] = int(MaskClass.DOT)
     return lab, {"ends": 2, "turns": 0, "branches": 0}
+
+
+def road_straight(curb_link: bool = False) -> tuple[np.ndarray, dict]:
+    """넓은 사진: 선형 줄이 횡단보도 없는 차도로 직진, 횡단보도는 오른쪽 옆. C2 (+C3 보조).
+
+    curb_link=True 면 연석을 따라 점형 줄이 옆 횡단보도까지 이어진다.
+    연결만 보면 정상이지만 선형이 차도를 향하므로 C2 (노션 5장 예시).
+    """
+    lab = _canvas()
+    lab[:200, :] = int(MaskClass.ROAD)
+    lab[:200, 440:600] = int(MaskClass.CROSSWALK)
+    _line(lab, (200, 620), (200, 235), MaskClass.LINEAR)
+    if curb_link:
+        lab[205:245, 185:470] = int(MaskClass.DOT)
+    return lab, {"c2": True, "c3": not curb_link}
+
+
+def side_crosswalk_no_turn() -> tuple[np.ndarray, dict]:
+    """넓은 사진: 횡단보도가 오른쪽 옆에 있는데 경로가 꺾이지 않고 앞(인도)으로 직진. C3."""
+    lab = _canvas()
+    lab[:, 420:] = int(MaskClass.ROAD)
+    lab[100:420, 420:] = int(MaskClass.CROSSWALK)
+    _line(lab, (150, 620), (150, 60), MaskClass.LINEAR)
+    return lab, {"c3": True}
+
+
+def short_of_crosswalk() -> tuple[np.ndarray, dict]:
+    """넓은 사진: 경로가 횡단보도를 향하지만 입구 훨씬 앞에서 끝남. C1."""
+    lab = _canvas()
+    lab[:200, :] = int(MaskClass.ROAD)
+    lab[:200, 240:400] = int(MaskClass.CROSSWALK)
+    _line(lab, (320, 620), (320, 380), MaskClass.LINEAR)
+    return lab, {"c1": "suspected"}
+
+
+def road_only_straight() -> tuple[np.ndarray, dict]:
+    """넓은 사진: 횡단보도 없이 차도만 보이고 경로가 차도로 직진. C2 + H3(부분 보류)."""
+    lab = _canvas()
+    lab[:200, :] = int(MaskClass.ROAD)
+    _line(lab, (320, 620), (320, 235), MaskClass.LINEAR)
+    return lab, {"c2": True}

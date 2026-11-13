@@ -37,8 +37,12 @@ def judge(
                 for f in c:
                     if f.code == "C3":
                         f.primary = False
-            h2 = hold.check_h2(wide)
-            findings += h2 or c_rules.check_c4(wide)
+            partial = hold.check_h3_partial(wide, cfg)
+            if partial:  # 횡단보도 없음: C4도 볼 수 없음
+                findings += partial
+            else:
+                h2 = hold.check_h2(wide)
+                findings += h2 or c_rules.check_c4(wide)
 
     return InspectionResult(overall=_overall(findings), findings=findings, close=close, wide=wide)
 
