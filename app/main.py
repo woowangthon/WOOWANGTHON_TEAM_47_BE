@@ -1,6 +1,7 @@
-"""FastAPI 서버. (담당: A)
+"""FastAPI 서버.
 
 실행: uvicorn app.main:app --reload
+설정은 환경변수 또는 레포 최상위 .env (예시: .env.example). 이미 설정된 환경변수가 .env보다 우선한다.
 """
 
 from __future__ import annotations
@@ -18,7 +19,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from pipeline.schema import SCHEMA_VERSION, InspectionResult
 
-from . import storage
+
+
+def _load_dotenv(path: Path = Path(__file__).resolve().parents[1] / ".env") -> None:
+    """.env의 KEY=VALUE를 환경변수로 (python-dotenv 없이). 이미 있는 값은 덮어쓰지 않는다."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        v = v.split(" #", 1)[0].strip().strip('"').strip("'")
+        if v:
+            os.environ.setdefault(k.strip(), v)
+
+
+_load_dotenv()
+
+from . import storage  # noqa: E402  (.env를 읽은 뒤에 불러옴)
 
 state: dict = {}
 
@@ -52,7 +71,8 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "schema_version": SCHEMA_VERSION, "model_loaded": "segmenter" in state}
+    return {"ok": True, "schema_version": SCHEMA_VERSION, "model_loaded": "segmenter" in state,
+            "storage": storage.backend()}
 
 
 async def _decode(f: Optional[UploadFile]) -> Optional[np.ndarray]:
