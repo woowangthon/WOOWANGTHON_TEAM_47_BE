@@ -40,3 +40,112 @@ def test_h2_holds_c4_without_rectification():
     label, _ = synth.approach_crosswalk()
     r = judge(None, analyze_label(label, PhotoKind.WIDE), label)
     assert "H2" in {f.code for f in r.findings}
+
+
+# ---------------------------------------------------------------- C 계열
+
+
+def _wide(label):
+    return judge(None, analyze_label(label, PhotoKind.WIDE), label)
+
+
+def _codes(r, verdict=None):
+    return {f.code for f in r.findings if verdict is None or f.verdict == verdict}
+
+
+def test_c1_normal_when_path_reaches_crosswalk():
+    label, _ = synth.approach_crosswalk()
+    r = _wide(label)
+    assert [f.verdict for f in r.findings if f.code == "C1"] == [Verdict.NORMAL]
+    assert not _codes(r, Verdict.SUSPECTED)
+
+
+def test_c2_when_path_heads_into_road():
+    label, _ = synth.road_straight()
+    r = _wide(label)
+    assert "C2" in _codes(r, Verdict.SUSPECTED)
+    c3 = [f for f in r.findings if f.code == "C3"]
+    assert c3 and all(not f.primary for f in c3)  # C2와 같이 뜨면 C3는 보조
+    assert r.overall == Verdict.SUSPECTED
+
+
+def test_c2_even_if_curb_blocks_link_to_crosswalk():
+    label, _ = synth.road_straight(curb_link=True)
+    r = _wide(label)
+    assert "C2" in _codes(r, Verdict.SUSPECTED)
+    assert "C1" not in _codes(r, Verdict.NORMAL)  # 연결돼 있어도 방향 오류가 우선
+
+
+def test_c3_when_crosswalk_is_beside_and_no_turn():
+    label, _ = synth.side_crosswalk_no_turn()
+    r = _wide(label)
+    assert _codes(r, Verdict.SUSPECTED) == {"C3"}
+    assert all(f.primary for f in r.findings if f.code == "C3")
+
+
+def test_c1_when_path_stops_short():
+    label, _ = synth.short_of_crosswalk()
+    r = _wide(label)
+    assert _codes(r, Verdict.SUSPECTED) == {"C1"}
+
+
+def test_road_only_checks_c2_and_holds_rest():
+    label, _ = synth.road_only_straight()
+    r = _wide(label)
+    assert "C2" in _codes(r, Verdict.SUSPECTED)
+    assert "H3" in _codes(r, Verdict.HOLD)
+    assert r.overall == Verdict.SUSPECTED
+
+
+# ---------------------------------------------------------------- C4 (사진까지 그린 장면)
+
+
+def _wide_img(**kw):
+    img, label, meta = synth.render_wide_scene(**kw)
+    return judge(None, analyze_label(label, PhotoKind.WIDE, img), label), meta
+
+
+def test_c4_normal_and_overall_normal():
+    r, _ = _wide_img()
+    assert [f.verdict for f in r.findings if f.code == "C4"] == [Verdict.NORMAL]
+    assert r.overall == Verdict.NORMAL  # C1 정상 + C4 정상
+
+
+def test_c4_when_ridges_misaligned():
+    r, _ = _wide_img(ridge_offset_deg=40)
+    c4 = [f for f in r.findings if f.code == "C4"]
+    assert c4 and all(f.verdict == Verdict.SUSPECTED for f in c4)
+    assert "어긋남" in c4[0].message
+
+
+def test_c4_small_offset_is_tolerated():
+    r, _ = _wide_img(ridge_offset_deg=10)
+    assert "C4" in _codes(r, Verdict.NORMAL)
+
+
+def test_c4_when_entrance_has_no_dot():
+    r, _ = _wide_img(entrance_dot=False)
+    assert any(f.code == "C4" and "점형" in f.message for f in r.findings if f.verdict == Verdict.SUSPECTED)
+
+
+def test_c4_robust_to_camera_yaw_and_roll():
+    assert "C4" in _codes(_wide_img(yaw_deg=15, roll_deg=-6)[0], Verdict.NORMAL)
+    assert "C4" in _codes(_wide_img(yaw_deg=15, roll_deg=-6, ridge_offset_deg=30)[0], Verdict.SUSPECTED)
+
+
+def test_h2_when_crosswalk_has_no_stripes():
+    r, _ = _wide_img(stripes=False)
+    assert "H2" in _codes(r, Verdict.HOLD)
+    assert "C4" not in _codes(r)
+
+
+def test_rectified_axis_matches_true_direction():
+    import numpy as np
+
+    from pipeline.rectify import angle_diff, angle_std, apply_h, rectify_by_crosswalk
+
+    img, label, meta = synth.render_wide_scene(yaw_deg=12, roll_deg=5)
+    rect = rectify_by_crosswalk(img, label)
+    assert rect.ok
+    q = apply_h(np.array(rect.homography) @ meta["top_to_img"], np.array([[600.0, 1500], [600.0, 1000]]))
+    assert angle_diff(rect.crosswalk_axis_deg, angle_std(*(q[1] - q[0]))) < 2
