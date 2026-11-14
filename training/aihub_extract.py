@@ -4,7 +4,7 @@
 
 하는 일
 1. TL9.zip에서 '09. 점자블럭' JSON만 읽는다 (도로안내표지 지주는 건너뜀)
-2. 지역(city_id)·날짜 묶음이 고르게 섞이게 후보 N장을 고른다
+2. 조건(블록 폴리곤: 정상 34 또는 불량전체 35, 꼭짓점 수)에 맞는 사진 중 무작위로 N장을 고른다
 3. TS9.zip에서 그 사진만 꺼내 긴 변을 줄여 저장한다
 4. 줄인 좌표로 CVAT용 COCO(클래스 `tactile` 하나)를 만든다
 5. 후보를 훑어볼 gallery.html, 메타데이터 candidates.csv를 만든다
@@ -31,7 +31,6 @@ import html
 import json
 import random
 import zipfile
-from collections import defaultdict
 from pathlib import Path
 
 import cv2
@@ -42,7 +41,7 @@ DATA = ROOT / "_data" / "119.보행 안전을 위한 도로 시설물 데이터"
 LABEL_ZIP = DATA / "라벨링데이터" / "TL9.zip"
 IMAGE_ZIP = DATA / "원천데이터" / "TS9.zip"
 TACTILE_DIR = "09."  # '09. 점자블럭/...'
-WHOLE_ID = "35"  # 점자블럭 불량전체 → 블록 영역
+BLOCK_IDS = {"34", "35"}  # 점자블럭 정상, 불량전체 → 블록 영역 (aihub_folder_coco.py와 같음)
 DAMAGE_ID = "36"  # 점자블럭 불량부분 → 파손 (확장 계획 X1)
 
 
@@ -58,7 +57,7 @@ def load_labels(zl: zipfile.ZipFile) -> list[dict]:
             continue
         j = json.loads(zl.read(name).decode("utf-8-sig"))
         info = j["info"]
-        whole = [a for a in j["annotations"] if a["label_id"] == WHOLE_ID]
+        whole = [a for a in j["annotations"] if a["label_id"] in BLOCK_IDS]
         out.append(
             {
                 "zip_name": name,
@@ -73,23 +72,10 @@ def load_labels(zl: zipfile.ZipFile) -> list[dict]:
 
 
 def pick(items: list[dict], n: int, min_points: int, seed: int) -> list[dict]:
-    """city_date 묶음을 돌아가며 하나씩 뽑는다. 꼭짓점이 많은(정교한) 폴리곤 우선."""
-    rng = random.Random(seed)
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for it in items:
-        if it["n_whole"] and it["max_points"] >= min_points:
-            groups[it["group"]].append(it)
-    for g in groups.values():
-        rng.shuffle(g)
-        g.sort(key=lambda it: -it["max_points"])
-    keys = list(groups)
-    rng.shuffle(keys)
-    chosen: list[dict] = []
-    while len(chosen) < n and any(groups[k] for k in keys):
-        for k in keys:
-            if groups[k] and len(chosen) < n:
-                chosen.append(groups[k].pop(0))
-    return chosen
+    """블록 폴리곤이 있고 꼭짓점이 min_points 이상인 사진 중 무작위로 n장 (모자라면 전부)."""
+    cands = [it for it in items if it["n_whole"] and it["max_points"] >= min_points]
+    random.Random(seed).shuffle(cands)
+    return cands[:n]
 
 
 def image_index(zi: zipfile.ZipFile) -> dict[str, str]:
@@ -133,8 +119,10 @@ def main() -> None:
     if args.used_out:
         args.used_out.write_text("\n".join(sorted(c["filename"] for c in chosen)) + "\n", encoding="utf-8")
     idx = image_index(zi)
-    print(f"점자블럭 JSON {len(items)}개 중 {len(chosen)}장 선택 "
-          f"(묶음 {len({c['group'] for c in chosen})}개)")
+    n_ok = sum(1 for it in items if it["n_whole"] and it["max_points"] >= args.min_points)
+    print(f"점자블럭 JSON {len(items)}개 중 조건에 맞는 {n_ok}장 → {len(chosen)}장 선택")
+    if len(chosen) < args.n:
+        print(f"  [주의] 조건에 맞는 사진이 {args.n}장보다 적음. --min-points를 낮추거나 --exclude를 줄이세요")
 
     cats = [{"id": 1, "name": "tactile", "supercategory": ""}]
     if args.with_damage:
@@ -163,7 +151,7 @@ def main() -> None:
         coco["images"].append({"id": image_id, "file_name": fn, "width": w, "height": h})
         polys = []
         for a in j["annotations"]:
-            cat = 1 if a["label_id"] == WHOLE_ID else 2 if (args.with_damage and a["label_id"] == DAMAGE_ID) else None
+            cat = 1 if a["label_id"] in BLOCK_IDS else 2 if (args.with_damage and a["label_id"] == DAMAGE_ID) else None
             if cat is None or a["annotation_type"] != "polygon" or len(a["annotation_info"]) < 3:
                 continue
             seg = polygon(a["annotation_info"], scale, w, h)
@@ -224,7 +212,7 @@ main{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:
 figure{margin:0}svg{width:100%;height:auto;display:block;background:#222}
 figcaption{word-break:break-all;padding:4px 0}span{color:#888}
 </style>
-<p>하늘색: 점자블럭(불량전체) 폴리곤, 빨강: 불량부분(--with-damage). 고른 사진은 candidates.csv의 type(mixed/linear/dot/background)·keep 열에 표시</p>
+<p>하늘색: 점자블럭(정상·불량전체) 폴리곤, 빨강: 불량부분(--with-damage). 고른 사진은 candidates.csv의 type(mixed/linear/dot/background)·keep 열에 표시</p>
 <main>
 {{CARDS}}
 </main>"""
