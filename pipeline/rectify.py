@@ -129,7 +129,7 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
     # 양옆 간격보다 훨씬 좁은 간격은 같은 줄로 본다
     while len(ts) >= 3:
         g = np.diff(ts)
-        ratio = [g[i] / min(g[j] for j in (i - 1, i + 1) if 0 <= j < len(g)) for i in range(len(g))]
+        ratio = [g[i] / max(1e-6, min(g[j] for j in (i - 1, i + 1) if 0 <= j < len(g))) for i in range(len(g))]
         i = int(np.argmin(ratio))
         if ratio[i] >= 0.45 and g[i] >= 3.0:
             break
