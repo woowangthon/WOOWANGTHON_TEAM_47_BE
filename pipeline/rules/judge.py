@@ -22,6 +22,7 @@ import numpy as np
 
 from ..schema import Finding, InspectionResult, PhotoAnalysis, Verdict
 from . import c_rules, hold, m_rules
+from .clauses import CLAUSES
 
 
 UNKNOWN_BLOCK_HOLD = ("블록 모델이 읽지 못한 점자블록이 있어 판정 보류. 블록이 더 크게 나오게 찍어 주세요")
@@ -39,6 +40,13 @@ def _hold_if_unknown_blocks(findings: list[Finding], photo: Optional[PhotoAnalys
             f.verdict, f.suggestion, f.clause = Verdict.HOLD, None, None
             held.append(f.code)
     return held
+
+
+def _attach_clauses(findings: list[Finding]) -> None:
+    """'오류 의심'인데 근거 조항이 비어 있으면 코드별 조항을 붙인다 (예: 시경 shape_rules의 M3)."""
+    for f in findings:
+        if f.verdict == Verdict.SUSPECTED and not f.clause:
+            f.clause = CLAUSES.get(f.code)
 
 
 def _c_family(wide: PhotoAnalysis, wide_label: Optional[np.ndarray], cfg: hold.HoldConfig) -> list[Finding]:
@@ -100,6 +108,7 @@ def judge_photo(
         scope["M"] = f"보류 ({why})"
 
     _hold_if_unknown_blocks(findings, photo)  # 종합 판정 계산 전에
+    _attach_clauses(findings)
     return InspectionResult(overall=_overall(findings), findings=findings, photo=photo, scope=scope)
 
 
@@ -126,6 +135,7 @@ def judge(
         if not holds:
             findings += _c_family(wide, wide_label, cfg)
         _hold_if_unknown_blocks(findings, wide)
+    _attach_clauses(findings)
 
     return InspectionResult(overall=_overall(findings), findings=findings, close=close, wide=wide)
 

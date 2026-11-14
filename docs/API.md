@@ -1,7 +1,14 @@
 # TactileCheck API (프론트 연동용)
 
-기본 주소: 개발 `http://localhost:8000` · 배포 후 Hugging Face Spaces 주소. 스키마 버전 `0.3.0`.
-브라우저에서 `/docs`를 열면 모든 API를 직접 눌러 볼 수 있다.
+| | 주소 |
+| --- | --- |
+| **배포 (EC2, HTTPS)** | `https://3-107-144-61.sslip.io` |
+| 로컬 개발 | `http://localhost:8000` (`uvicorn app.main:app --port 8000`) |
+
+스키마 버전 `0.3.1`. 브라우저에서 `https://3-107-144-61.sslip.io/docs`를 열면 모든 API를 직접 눌러 볼 수 있다.
+
+- 프론트 배포 주소(예: Vercel)는 서버 CORS 허용 목록에 넣어야 브라우저 요청이 통과한다 → 주소가 정해지면 백엔드 담당에게 알려 줄 것
+- 위치(`navigator.geolocation`)는 HTTPS 페이지에서만 동작한다 (localhost는 예외)
 
 ## 시민 화면
 
@@ -57,6 +64,11 @@ const pins = result.findings
   .map((f, i) => ({ n: i + 1, left: f.location.x * sx, top: f.location.y * sy, verdict: f.verdict }));
 ```
 저장된 사진은 줄여서 저장되지만 가로세로 비율은 같으므로 위 계산 그대로 쓰면 된다.
+
+### 보류 판정 표시
+`verdict: "hold"`인 판정은 회색 카드로, `message`에 이유와 재촬영 안내가 들어 있다
+(예: "블록 모델이 읽지 못한 점자블록이 있어 판정 보류. 블록이 더 크게 나오게 찍어 주세요 (원래 판정: …)").
+`clause`·`suggestion`은 null일 수 있다.
 
 ### 판정 코드 화면 이름
 M3 꺾임·분기점 점형 누락 · M4 선형 경로 끊김 · C1 횡단보도 연결 누락 · C2 차도 방향 유도(위험) ·
