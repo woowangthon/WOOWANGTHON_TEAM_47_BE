@@ -153,3 +153,12 @@ def test_ping(supa):
     supa.db["fail"] = True
     with pytest.raises(RuntimeError):
         storage.ping()
+
+
+def test_downloaded_photo_is_cached(supa):
+    r = storage.save_report(_result(), IMG)
+    storage._memory.clear()
+    storage._photos.clear()
+    assert storage.load_photo(r.inspection_id)  # Supabase에서 받음
+    supa.storage.files.clear()  # 저장소가 사라져도
+    assert storage.load_photo(r.inspection_id)  # 메모리에 남아 있음

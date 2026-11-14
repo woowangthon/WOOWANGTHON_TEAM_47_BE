@@ -35,6 +35,7 @@ log = logging.getLogger("tactilecheck.storage")
 
 PHOTO_LONG_SIDE = 1600
 PHOTO_QUALITY = 85
+PHOTO_CACHE_MAX = 100
 
 _memory: dict[str, dict] = {}  # id → DB 행과 같은 모양
 _photos: dict[str, bytes] = {}  # id → JPEG (Supabase 없을 때만)
@@ -102,15 +103,13 @@ def save_report(result: InspectionResult, image_bgr: Optional[np.ndarray] = None
         jpg = encode_photo(image_bgr)
         photo_path = f"{rid}.jpg"
         client = _client()
-        if client is None:
-            _photos[rid] = jpg
-        else:
+        if client is not None:
             try:
                 client.storage.from_(_bucket()).upload(
                     photo_path, jpg, {"content-type": "image/jpeg", "upsert": "true"})
-            except Exception as e:
+            except Exception as e:  # 업로드 실패해도 서버가 살아 있는 동안은 메모리 사진으로 보여 준다
                 log.warning("사진 업로드 실패 (%s): %s", rid, e)
-                _photos[rid] = jpg  # 서버가 살아 있는 동안은 보여 줄 수 있게
+        _cache_photo(rid, jpg)  # 접수 직후 결과 화면이 바로 사진을 부르므로 메모리에도 둔다
         result.photo_url = photo_url(rid)
 
     loc = location or Location()
@@ -191,10 +190,22 @@ def load_photo(rid: str) -> Optional[bytes]:
     if not row or not row.get("photo_path") or client is None:
         return None
     try:
-        return client.storage.from_(_bucket()).download(row["photo_path"])
+        jpg = client.storage.from_(_bucket()).download(row["photo_path"])
     except Exception as e:
         log.warning("사진 다운로드 실패 (%s): %s", rid, e)
         return None
+    _cache_photo(rid, jpg)
+    return jpg
+
+
+def _cache_photo(rid: str, jpg: bytes) -> None:
+    """서버와 Supabase가 멀어(시드니↔아시아) 다운로드가 느리므로 최근 사진은 메모리에 보관 (약 100장 ≈ 10MB).
+    Supabase가 없으면 이게 유일한 사진 저장소라 지우지 않는다."""
+    _photos[rid] = jpg
+    if _client() is None:
+        return
+    while len(_photos) > PHOTO_CACHE_MAX:
+        _photos.pop(next(iter(_photos)))
 
 
 # ---------------------------------------------------------------- 관리자
