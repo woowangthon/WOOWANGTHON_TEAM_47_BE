@@ -1,3 +1,3 @@
-from .judge import judge
+from .judge import judge, judge_photo
 
-__all__ = ["judge"]
+__all__ = ["judge", "judge_photo"]

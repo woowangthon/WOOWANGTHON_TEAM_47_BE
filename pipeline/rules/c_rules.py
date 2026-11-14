@@ -4,7 +4,10 @@
 1. 방향 판정 먼저: 블록 경로 끝점의 연장선(레이)을 긋는다
    - 연장선이 횡단보도 밖 차도에 닿음 → C2 (다른 블록으로 횡단보도에 이어져 있어도 오류)
 2. 연결 판정: 블록이 횡단보도 입구에 닿는가
-   - 닿음 → 정상 (C2가 없을 때만 C1 정상 표시)
+   - 닿고, 경로가 횡단보도 안으로 들어가는 방향 → 정상 (C2가 없을 때만 C1 정상 표시)
+   - 닿긴 하지만 옆을 스쳐 지나갈 뿐 (연석 따라 지나가는 선형 등) → C3
+   - 입구에 닿은 블록이 점형뿐이고 선형 유도가 전혀 이어지지 않음 → C5
+3. 방향 일치 (C6, judge에서 따로 호출): 진입부로 들어오는 선형 줄의 방향 vs 횡단보도 건너는 방향
    - 연장선은 횡단보도를 향하는데 못 미침 → C1
    - 연장선이 횡단보도를 비켜가고(옆에 있음) 그쪽으로 이어진 블록 없음 → C3
      (C2와 함께 뜨면 judge에서 C3를 primary=False로 바꾼다)
@@ -35,6 +38,9 @@ class ContextConfig:
     ray_len: float = 0.5  # 연장선 최대 길이
     entrance_gap: float = 0.03  # 블록이 횡단보도에서 이만큼 안에 있으면 '입구에 닿음'
     junction_ray_len: float = 0.08  # 꺾임·분기점에서 직진 연장선 길이 (연석 바로 앞에서 꺾인 경우)
+    arrive_len: float = 0.15  # 끝점·분기점에서 이 거리 안에 횡단보도(부풀리지 않은 원래 영역)가 있으면 '들어감'
+    max_linear_share: float = 0.1  # 입구 블록 덩어리 중 선형 비율이 이보다 낮으면 선형 유도 없음 (C5)
+    arrive_min_edge: float = 0.04  # '들어감' 판단에 쓰는 중심선 구간의 최소 길이 (계단 모양 점형 띠의 짧은 꺾임 제외)
     ray_step_px: float = 2.0
     end_dir_px: float = 80.0  # 끝 방향을 잴 중심선 구간 길이
 
@@ -114,6 +120,148 @@ def cast_rays(wide: PhotoAnalysis, label: np.ndarray, cfg: ContextConfig) -> lis
     return out
 
 
+def _path_rays(wide: PhotoAnalysis, cfg: ContextConfig, min_edge_px: float = 0.0):
+    """(노드, 방향) 목록: 끝점은 바깥 방향, 꺾임·분기점은 각 엣지의 직진 방향.
+
+    min_edge_px 보다 짧은 중심선 구간에서 나온 방향은 뺀다.
+    """
+    for n in wide.path.nodes:
+        if n.type == NodeType.END:
+            edges = wide.path.edges_of(n.id)
+            if edges and edges[0].length_px < min_edge_px:
+                continue
+            d = end_direction(wide.path, n.id, cfg.end_dir_px)
+            if d:
+                yield n, d
+        elif n.type in (NodeType.TURN, NodeType.BRANCH):
+            for e in wide.path.edges_of(n.id):
+                if e.length_px < min_edge_px:
+                    continue
+                d = _edge_continuation(wide.path, n.id, e, cfg.end_dir_px)
+                if d:
+                    yield n, d
+
+
+def arrives_at_crosswalk(wide: PhotoAnalysis, label: np.ndarray, cfg: ContextConfig) -> bool:
+    """경로가 횡단보도 '안으로 들어가는' 방향인가.
+
+    입구에 닿았는지(cw_near)만 보면 연석을 따라 옆으로 지나가는 선형도 정상이 된다.
+    끝점·분기점에서 진행 방향으로 짧게 그은 선이 실제 횡단보도에 닿아야 들어간다고 본다.
+    """
+    h, w = label.shape[:2]
+    cw = label == MaskClass.CROSSWALK
+    none = np.zeros_like(cw)
+    diag = math.hypot(w, h)
+    max_len = cfg.arrive_len * diag
+    for n, d in _path_rays(wide, cfg, cfg.arrive_min_edge * diag):
+        hit, _ = _march(n.pt.x, n.pt.y, d, max_len, cw, none, cfg.ray_step_px)
+        if hit == MaskClass.CROSSWALK:
+            return True
+    return False
+
+
+def _nearest_end(wide: PhotoAnalysis, cw: np.ndarray) -> Optional[Point]:
+    ys, xs = np.nonzero(cw)
+    cx, cy = float(xs.mean()), float(ys.mean())
+    ends = [n for n in wide.path.nodes if n.type == NodeType.END]
+    if not ends:
+        return None
+    n = min(ends, key=lambda n: math.dist((n.pt.x, n.pt.y), (cx, cy)))
+    return Point(x=n.pt.x, y=n.pt.y)
+
+
+def _check_c5(label, blocks, cw_near, cfg: ContextConfig) -> list[Finding]:
+    """C5: 횡단보도 입구에 닿은 블록 덩어리가 (거의) 점형뿐 → 위험 표시만 있고 길 안내가 없음."""
+    n, cc = cv2.connectedComponents(blocks.astype(np.uint8))
+    ids = np.unique(cc[blocks & cw_near])
+    comp = np.isin(cc, ids[ids > 0])
+    lin = int((comp & (label == MaskClass.LINEAR)).sum())
+    dot = int((comp & (label == MaskClass.DOT)).sum())
+    if dot == 0 or lin / (lin + dot) >= cfg.max_linear_share:
+        return []
+    ys, xs = np.nonzero(comp)
+    return [Finding(
+        code="C5", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+        message="횡단보도 앞에 점형(위험 표시)은 있지만 그곳으로 이어지는 선형 유도 블록이 없음",
+        location=Point(x=float(xs.mean()), y=float(ys.mean())),
+        clause=CLAUSES["C5"], suggestion=SUGGESTIONS["C5"], confidence=0.5,
+    )]
+
+
+@dataclass
+class C6Config:
+    max_dev_rect_deg: float = 20.0  # 시점 보정 성공 시 허용 각도 차
+    max_dev_rough_deg: float = 30.0  # 보정 실패(대략 소실점) 시 허용 각도 차
+    near_crosswalk: float = 0.15  # 사진 대각선 대비: 선형 줄 끝이 횡단보도에서 이 안이어야 '진입부로 들어오는 줄'
+    min_edge: float = 0.05  # 사진 대각선 대비: 방향을 잴 선형 중심선 최소 길이
+    dir_len_px: float = 120.0  # 진입부 쪽 끝에서 이만큼 중심선을 따라가며 방향을 잰다
+    # 보정 실패 시 대략 소실점(walk_vp)으로도 판정할지. 실제 사진 25장에서 정상 사진 7장에 가짜 C6가 떠서 꺼 둠
+    use_rough: bool = False
+
+
+def check_c6(wide: PhotoAnalysis, label: Optional[np.ndarray], cfg: Optional[C6Config] = None) -> list[Finding]:
+    """C6: 진입부로 들어오는 선형 줄의 방향이 횡단보도 건너는 방향과 다름.
+
+    - 시점 보정 성공: 선형 줄을 보정 평면으로 옮겨 crosswalk_axis_deg 와 비교 (정확)
+    - 보정 실패: 흰 줄로 구한 대략 소실점(walk_vp)을 향하는 방향과 사진에서 비교 (여유 있게 30°)
+      → 실제 사진에서 오탐이 많아 기본은 꺼져 있음 (C6Config.use_rough)
+    """
+    from ..rectify import angle_diff, angle_std, apply_h
+
+    cfg = cfg or C6Config()
+    rect = wide.rectification
+    if label is None or rect is None or not (rect.ok or (cfg.use_rough and rect.walk_vp)):
+        return []
+    cw = label == MaskClass.CROSSWALK
+    if not cw.any():
+        return []
+    h, w = label.shape[:2]
+    diag = math.hypot(w, h)
+    dist = cv2.distanceTransform((~cw).astype(np.uint8), cv2.DIST_L2, 5)
+
+    best = None  # (횡단보도까지 거리, 끝점, 방향을 잴 점들)
+    for e in wide.path.edges:
+        if e.block != MaskClass.LINEAR or e.length_px < cfg.min_edge * diag:
+            continue
+        pts = [(p.x, p.y) for p in e.polyline]
+        d0 = dist[min(h - 1, int(pts[0][1])), min(w - 1, int(pts[0][0]))]
+        d1 = dist[min(h - 1, int(pts[-1][1])), min(w - 1, int(pts[-1][0]))]
+        if d1 < d0:
+            pts, d0 = pts[::-1], d1  # pts[0]이 횡단보도 쪽 끝
+        if d0 > cfg.near_crosswalk * diag:
+            continue
+        seg, acc = [pts[0]], 0.0
+        for a, b in zip(pts, pts[1:]):
+            acc += math.dist(a, b)
+            seg.append(b)
+            if acc >= cfg.dir_len_px:
+                break
+        if best is None or d0 < best[0]:
+            best = (d0, pts[0], np.array(seg))
+    if best is None:
+        return []
+    _, tip, seg = best
+
+    if rect.ok:
+        q = apply_h(np.array(rect.homography), seg)
+        line = angle_std(*(q[0] - q[-1]))
+        dev, limit, conf = angle_diff(line, rect.crosswalk_axis_deg), cfg.max_dev_rect_deg, 0.6
+    else:
+        vx, vy, vw = rect.walk_vp
+        to_vp = (vx - tip[0] * vw, vy - tip[1] * vw)
+        line = angle_std(*(seg[0] - seg[-1]))
+        dev, limit, conf = angle_diff(line, angle_std(*to_vp)), cfg.max_dev_rough_deg, 0.45
+    if dev <= limit:
+        return []
+    return [Finding(
+        code="C6", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+        message=f"선형 블록이 안내하는 방향이 횡단보도 건너는 방향과 약 {dev:.0f}° 다름"
+                + ("" if rect.ok else " (시점 보정 없이 대략 추정)"),
+        location=Point(x=float(tip[0]), y=float(tip[1])),
+        clause=CLAUSES["C6"], suggestion=SUGGESTIONS["C6"], confidence=conf,
+    )]
+
+
 def check_direction_and_connection(
     wide: PhotoAnalysis, wide_label: Optional[np.ndarray], cfg: Optional[ContextConfig] = None
 ) -> list[Finding]:
@@ -148,11 +296,23 @@ def check_direction_and_connection(
 
     # 2. 연결: 블록이 횡단보도 입구에 닿는가
     touching = bool((blocks & cw_near).any())
+    if touching and not has_c2:
+        c5 = _check_c5(wide_label, blocks, cw_near, cfg)
+        if c5:
+            return findings + c5
     if touching:
-        if not has_c2:
+        if arrives_at_crosswalk(wide, wide_label, cfg):
+            if not has_c2:
+                findings.append(Finding(
+                    code="C1", verdict=Verdict.NORMAL, photo=PhotoKind.WIDE,
+                    message="블록 경로가 횡단보도 입구까지 이어짐", confidence=0.6,
+                ))
+        elif not has_c2:  # 닿긴 하지만 옆을 스쳐 지나감
             findings.append(Finding(
-                code="C1", verdict=Verdict.NORMAL, photo=PhotoKind.WIDE,
-                message="블록 경로가 횡단보도 입구까지 이어짐", confidence=0.6,
+                code="C3", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+                message="블록이 횡단보도 옆을 지나갈 뿐, 횡단보도 쪽으로 들어가는 안내가 없음",
+                location=_nearest_end(wide, cw), clause=CLAUSES["C3"], suggestion=SUGGESTIONS["C3"],
+                confidence=0.55,
             ))
         return findings
 
@@ -168,18 +328,10 @@ def check_direction_and_connection(
         return findings
 
     # 연장선이 횡단보도를 비켜감 → 횡단보도에 가장 가까운 끝점에서 C3
-    ys, xs = np.nonzero(cw)
-    cx, cy = float(xs.mean()), float(ys.mean())
-    ends = [n for n in wide.path.nodes if n.type == NodeType.END]
-    if ends:
-        n = min(ends, key=lambda n: math.dist((n.pt.x, n.pt.y), (cx, cy)))
-        loc = Point(x=n.pt.x, y=n.pt.y)
-    else:
-        loc = None
     findings.append(Finding(
         code="C3", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
         message="옆에 횡단보도가 있는데 그쪽으로 꺾는 안내 없이 직진만 표시됨",
-        location=loc, clause=CLAUSES["C3"], suggestion=SUGGESTIONS["C3"], confidence=0.6,
+        location=_nearest_end(wide, cw), clause=CLAUSES["C3"], suggestion=SUGGESTIONS["C3"], confidence=0.6,
     ))
     return findings
 
@@ -188,6 +340,40 @@ def check_direction_and_connection(
 class C4Config:
     max_ridge_dev_deg: float = 20.0  # 선형 돌출선과 횡단보도 진행축의 허용 각도 차
     min_conf: float = 0.5
+    # 시점 보정 실패 시 라벨로 진입부 점형 확인
+    entrance_gap: float = 0.03  # 사진 대각선 대비 (ContextConfig.entrance_gap과 같음)
+    min_entrance_px: float = 0.002  # 진입부 블록이 사진 면적의 이만큼은 있어야 판단
+    max_dot_share: float = 0.15  # 진입부 블록 중 점형 비율이 이보다 낮으면 점형 누락
+
+
+def check_c4_from_label(wide: PhotoAnalysis, label: Optional[np.ndarray],
+                        cfg: Optional[C4Config] = None) -> list[Finding]:
+    """시점 보정이 실패했을 때: 횡단보도 입구에 닿은 블록이 거의 선형뿐이면 점형 누락(C4).
+
+    무늬(FFT) 대신 모델이 준 선형/점형 라벨을 믿는 방식이라 신뢰도를 낮게 둔다.
+    돌출선 방향은 보정 없이는 못 보므로 H2(방향 판정 보류)는 그대로 남는다.
+    """
+    if label is None:
+        return []
+    cfg = cfg or C4Config()
+    h, w = label.shape[:2]
+    gap = max(1, round(cfg.entrance_gap * math.hypot(w, h)))
+    cw = (label == MaskClass.CROSSWALK).astype(np.uint8)
+    if not cw.any():
+        return []
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * gap + 1, 2 * gap + 1))
+    near = cv2.dilate(cw, k).astype(bool)
+    lin = int((near & (label == MaskClass.LINEAR)).sum())
+    dot = int((near & (label == MaskClass.DOT)).sum())
+    if lin + dot < cfg.min_entrance_px * h * w or dot / (lin + dot) >= cfg.max_dot_share:
+        return []
+    ys, xs = np.nonzero(near & (label == MaskClass.LINEAR))
+    return [Finding(
+        code="C4", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+        message="횡단보도 진입부에 점형 블록이 없고 선형만 깔려 있음 (시점 보정 없이 블록 종류로 판단)",
+        location=Point(x=float(xs.mean()), y=float(ys.mean())),
+        clause=CLAUSES["C4"], suggestion=SUGGESTIONS["C4"], confidence=0.45,
+    )]
 
 
 def check_c4(wide: PhotoAnalysis, cfg: Optional[C4Config] = None) -> list[Finding]:

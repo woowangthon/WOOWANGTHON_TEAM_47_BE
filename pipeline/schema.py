@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.1.1"  # 0.1.1: Rectification.px_per_m, RoiAnalysis.role 추가 (C4)
+SCHEMA_VERSION = "0.2.0"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +125,10 @@ class Rectification(BaseModel):
         None, description="보정 평면에서 횡단보도 진행축 각도 (0=오른쪽, 반시계 +)"
     )
     px_per_m: Optional[float] = Field(None, description="보정 평면에서 1m가 몇 단위인지 (횡단보도 줄 간격으로 추정)")
+    walk_vp: Optional[list[float]] = Field(
+        None, description="원본 사진에서 '횡단보도 건너는 방향'의 소실점 (동차좌표 x,y,w). "
+        "카메라가 기울지 않았다고 가정한 대략값으로, 보정이 실패해도 흰 줄이 3개 이상이면 채움 (C6)"
+    )
     reason: Optional[str] = None
 
 
@@ -165,7 +169,7 @@ class Verdict(str, Enum):
     HOLD = "hold"  # 판정 보류 (재촬영 요청)
 
 
-Code = Literal["M3", "M4", "C1", "C2", "C3", "C4", "H1", "H2", "H3", "H4"]
+Code = Literal["M3", "M4", "C1", "C2", "C3", "C4", "C5", "C6", "H1", "H2", "H3", "H4"]
 
 
 class Finding(BaseModel):
@@ -185,5 +189,10 @@ class InspectionResult(BaseModel):
     inspection_id: Optional[str] = None
     overall: Verdict
     findings: list[Finding] = Field(default_factory=list)
-    close: Optional[PhotoAnalysis] = None
-    wide: Optional[PhotoAnalysis] = None
+    photo: Optional[PhotoAnalysis] = Field(None, description="사진 한 장 구조의 분석 결과 (0.2.0부터 기본)")
+    scope: dict[str, str] = Field(
+        default_factory=dict,
+        description='계열별 판정 여부와 이유. 예: {"C": "판정", "M": "건너뜀 (블록이 작게 찍혀 ...)"}',
+    )
+    close: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")
+    wide: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")

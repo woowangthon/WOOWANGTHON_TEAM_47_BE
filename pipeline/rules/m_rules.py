@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
+import numpy as np
+
 from ..schema import Finding, MaskClass, NodeType, PhotoAnalysis, PhotoKind, Verdict
 from .clauses import CLAUSES, SUGGESTIONS
 
@@ -37,3 +41,14 @@ def check_m4(close: PhotoAnalysis) -> list[Finding]:
     두 끝점 방향이 서로 마주 보며 거리가 임계값 이하이면 끊김 의심.
     """
     return []
+
+
+def check_m(photo: PhotoAnalysis, label: Optional[np.ndarray]) -> list[Finding]:
+    """사진 한 장용 M 계열. 시경의 shape_rules.analyze_m3(main)가 있으면 그걸 쓰고, 없으면 위의 check_m3."""
+    try:
+        from ..shape_rules import analyze_m3
+    except ImportError:
+        analyze_m3 = None
+    if analyze_m3 is not None and label is not None:
+        return analyze_m3(label, photo.path) + check_m4(photo)
+    return check_m3(photo) + check_m4(photo)

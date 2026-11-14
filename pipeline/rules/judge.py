@@ -1,4 +1,14 @@
-"""⑤ 규칙 판정: 보류 조건 → M 계열 → C 계열 → 종합."""
+"""⑤ 규칙 판정.
+
+judge_photo(): 사진 한 장 구조 (서비스 기본).
+    사진에 보이는 것으로 적용할 규칙을 정한다. 둘 다 해당하면 둘 다 판정한다.
+    - H1 블록 신뢰도 낮음 → 사진 전체 보류
+    - 횡단보도·차도가 보임 → C 계열
+    - 블록이 크고 선명함 (M 관문) → M 계열
+      관문을 못 넘으면: C 판정을 했으면 M은 건너뛰고, 아무것도 못 봤으면 H4 보류(가까이 찍기 안내)
+
+judge(): 예전 사진 두 장(근접·넓은) 구조. 테스트와 호환용으로 남겨 둔다.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +20,74 @@ from ..schema import Finding, InspectionResult, PhotoAnalysis, Verdict
 from . import c_rules, hold, m_rules
 
 
+def _c_family(wide: PhotoAnalysis, wide_label: Optional[np.ndarray], cfg: hold.HoldConfig) -> list[Finding]:
+    """C 계열 (H1·H3 검사는 호출하는 쪽에서)."""
+    findings: list[Finding] = []
+    c = c_rules.check_direction_and_connection(wide, wide_label)
+    findings += c
+    if any(f.code == "C2" and f.verdict == Verdict.SUSPECTED for f in c):  # C2가 있으면 C3는 보조 표시
+        for f in c:
+            if f.code == "C3":
+                f.primary = False
+    partial = hold.check_h3_partial(wide, cfg)
+    if partial:  # 횡단보도 없음: C4·C6도 볼 수 없음
+        return findings + partial
+    findings += c_rules.check_c6(wide, wide_label)
+    h2 = hold.check_h2(wide)
+    if h2:  # 보정 실패: 방향은 보류, 점형 유무만 라벨로 확인
+        findings += h2 + c_rules.check_c4_from_label(wide, wide_label)
+    else:
+        findings += c_rules.check_c4(wide)
+    return findings
+
+
+def judge_photo(
+    photo: PhotoAnalysis,
+    label: Optional[np.ndarray],
+    cfg: Optional[hold.HoldConfig] = None,
+) -> InspectionResult:
+    """사진 한 장 판정. scope에 M·C 계열을 판정했는지, 왜 안 했는지 남긴다."""
+    cfg = cfg or hold.HoldConfig()
+    h1 = hold.check_h1(photo, cfg)
+    if h1:
+        return InspectionResult(overall=Verdict.HOLD, findings=h1, photo=photo,
+                                scope={"C": "보류 (블록 인식 신뢰도 낮음)", "M": "보류 (블록 인식 신뢰도 낮음)"})
+
+    findings: list[Finding] = []
+    scope: dict[str, str] = {}
+
+    c_on = hold.has_class(photo, "crosswalk", cfg) or hold.has_class(photo, "road", cfg)
+    if c_on:
+        findings += _c_family(photo, label, cfg)
+        scope["C"] = "판정"
+    else:
+        scope["C"] = "해당 없음 (횡단보도·차도가 보이지 않음)"
+
+    m_ok, why = hold.m_gate(photo, label, cfg)
+    if m_ok:
+        m = m_rules.check_m(photo, label)
+        if c_on and m and all(f.verdict == Verdict.HOLD for f in m):
+            m = []  # 횡단보도 사진에 꺾임·분기점이 없으면 M은 대상 없음 (보류로 세지 않음)
+            scope["M"] = "대상 없음 (꺾임·분기점이 보이지 않음)"
+        else:
+            scope["M"] = "판정"
+        findings += m
+    elif c_on:
+        scope["M"] = f"건너뜀 ({why})"
+    else:
+        findings += hold.h4_from_gate(why)
+        scope["M"] = f"보류 ({why})"
+
+    return InspectionResult(overall=_overall(findings), findings=findings, photo=photo, scope=scope)
+
+
 def judge(
     close: Optional[PhotoAnalysis],
     wide: Optional[PhotoAnalysis],
     wide_label: Optional[np.ndarray] = None,
     cfg: Optional[hold.HoldConfig] = None,
 ) -> InspectionResult:
+    """예전 사진 두 장 구조."""
     cfg = cfg or hold.HoldConfig()
     findings: list[Finding] = []
 
@@ -30,19 +102,7 @@ def judge(
         holds = hold.check_h1(wide, cfg) or hold.check_h3(wide, cfg)
         findings += holds
         if not holds:
-            c = c_rules.check_direction_and_connection(wide, wide_label)
-            findings += c
-            # C2가 있으면 C3는 보조 표시
-            if any(f.code == "C2" and f.verdict == Verdict.SUSPECTED for f in c):
-                for f in c:
-                    if f.code == "C3":
-                        f.primary = False
-            partial = hold.check_h3_partial(wide, cfg)
-            if partial:  # 횡단보도 없음: C4도 볼 수 없음
-                findings += partial
-            else:
-                h2 = hold.check_h2(wide)
-                findings += h2 or c_rules.check_c4(wide)
+            findings += _c_family(wide, wide_label, cfg)
 
     return InspectionResult(overall=_overall(findings), findings=findings, close=close, wide=wide)
 

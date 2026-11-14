@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
-from ..schema import Finding, PhotoAnalysis, PhotoKind, Verdict
+import numpy as np
+
+from ..schema import BLOCK_CLASSES, Finding, PhotoAnalysis, PhotoKind, Verdict
 
 
 @dataclass
@@ -12,6 +15,7 @@ class HoldConfig:
     min_confidence: float = 0.5  # H1
     min_crosswalk_ratio: float = 0.01  # H3: 사진 면적 대비
     min_block_ratio: float = 0.02  # H4: 가장 큰 블록 덩어리 면적 비
+    min_block_width: float = 0.035  # M 관문: 블록 줄 폭이 사진 짧은 변의 이 비율 이상이어야 점형·선형 구분을 믿음
 
 
 def check_h1(p: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
@@ -62,3 +66,31 @@ def check_h4(close: PhotoAnalysis, cfg: HoldConfig) -> list[Finding]:
         return []
     return [Finding(code="H4", verdict=Verdict.HOLD, photo=PhotoKind.CLOSE,
                     message="블록 영역이 너무 작거나 없음. 블록이 화면 아래 절반을 채우게 찍어 주세요")]
+
+
+def block_width_px(label: np.ndarray) -> float:
+    """블록 줄의 대표 폭(px): 중심선 위 거리변환 값(=반폭)의 중앙값 × 2."""
+    import cv2
+    from skimage.morphology import skeletonize
+
+    blocks = np.isin(label, [int(c) for c in BLOCK_CLASSES])
+    if not blocks.any():
+        return 0.0
+    dt = cv2.distanceTransform(blocks.astype(np.uint8), cv2.DIST_L2, 5)
+    sk = skeletonize(blocks)
+    return float(2 * np.median(dt[sk])) if sk.any() else 0.0
+
+
+def m_gate(p: PhotoAnalysis, label: Optional[np.ndarray], cfg: HoldConfig) -> tuple[bool, str]:
+    """M 계열(모양) 판정 관문: 블록이 충분히 크고 선명한가. (통과 여부, 못 넘은 이유)"""
+    s, areas = p.segmentation, p.path.component_area_px
+    if not areas or max(areas.values()) < cfg.min_block_ratio * s.width * s.height:
+        return False, "블록 영역이 너무 작거나 없음"
+    if label is not None and block_width_px(label) < cfg.min_block_width * min(s.width, s.height):
+        return False, "블록이 작게 찍혀 점형·선형 구분이 어려움"
+    return True, ""
+
+
+def h4_from_gate(why: str) -> list[Finding]:
+    return [Finding(code="H4", verdict=Verdict.HOLD, photo=PhotoKind.CLOSE,
+                    message=f"{why}. 블록이 화면을 크게 채우게 가까이 찍어 주세요")]

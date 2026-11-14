@@ -8,16 +8,23 @@ def _m3(result):
     return [f for f in result.findings if f.code == "M3"]
 
 
+def _photo(label):
+    """M3는 서비스 경로(사진 한 장 판정 → 시경 shape_rules.analyze_m3)로 확인한다."""
+    from pipeline.rules import judge_photo
+
+    return judge_photo(analyze_label(label, PhotoKind.CLOSE), label)
+
+
 def test_m3_normal_when_turn_is_dot():
     label, _ = synth.l_turn(dot_at_turn=True)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     assert [f.verdict for f in _m3(r)] == [Verdict.NORMAL]
     assert r.overall == Verdict.NORMAL
 
 
 def test_m3_suspected_when_turn_is_linear():
     label, _ = synth.l_turn(dot_at_turn=False)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     bad = [f for f in _m3(r) if f.verdict == Verdict.SUSPECTED]
     assert len(bad) == 1 and bad[0].location is not None
     assert r.overall == Verdict.SUSPECTED
@@ -25,7 +32,7 @@ def test_m3_suspected_when_turn_is_linear():
 
 def test_m3_suspected_at_branch():
     label, _ = synth.t_branch(dot_at_branch=False)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     assert any(f.verdict == Verdict.SUSPECTED for f in _m3(r))
 
 
@@ -149,3 +156,82 @@ def test_rectified_axis_matches_true_direction():
     assert rect.ok
     q = apply_h(np.array(rect.homography) @ meta["top_to_img"], np.array([[600.0, 1500], [600.0, 1000]]))
     assert angle_diff(rect.crosswalk_axis_deg, angle_std(*(q[1] - q[0]))) < 2
+
+
+# ---------------------------------------------------------------- 규칙위반케이스로 고친 것
+
+
+def test_path_along_curb_is_not_c1_normal():
+    """횡단보도 옆을 스쳐 지나가는 선형은 입구에 닿아도 정상이 아니다 (C3)."""
+    label, _ = synth.along_curb_past_crosswalk()
+    r = _wide(label)
+    assert "C1" not in _codes(r, Verdict.NORMAL)
+    assert "C3" in _codes(r, Verdict.SUSPECTED)
+
+
+def test_c4_entrance_without_dot_detected_without_rectification():
+    label, _ = synth.approach_crosswalk(entrance_dot=False)
+    r = _wide(label)  # 사진 없이 라벨만 → 시점 보정 실패(H2)
+    assert "H2" in _codes(r, Verdict.HOLD)
+    assert "C4" in _codes(r, Verdict.SUSPECTED)
+
+
+def test_c4_entrance_with_dot_not_flagged_without_rectification():
+    label, _ = synth.approach_crosswalk(entrance_dot=True)
+    r = _wide(label)
+    assert "C4" not in _codes(r, Verdict.SUSPECTED)
+    assert "C1" in _codes(r, Verdict.NORMAL)
+
+
+# ---------------------------------------------------------------- C5 선형 유도 없음 · C6 선형 방향 불일치
+
+
+def test_c5_dot_at_entrance_but_no_linear():
+    r, _ = _wide_img(linear=False)
+    assert "C5" in _codes(r, Verdict.SUSPECTED)
+    assert "C1" not in _codes(r, Verdict.NORMAL)
+
+
+def test_c5_not_raised_for_normal_scene():
+    r, _ = _wide_img()
+    assert "C5" not in _codes(r)
+    assert "C6" not in _codes(r)
+
+
+def test_c6_when_linear_path_is_slanted():
+    r, _ = _wide_img(path_angle_deg=35)
+    c6 = [f for f in r.findings if f.code == "C6"]
+    assert c6 and c6[0].verdict == Verdict.SUSPECTED
+
+
+def test_c6_small_slant_tolerated():
+    r, _ = _wide_img(path_angle_deg=10)
+    assert "C6" not in _codes(r)
+
+
+def test_c6_rough_without_rectification():
+    """보정 실패여도 흰 줄로 구한 대략 소실점으로 비스듬한 줄을 잡는다."""
+    from pipeline.rectify import rectify_by_crosswalk
+
+    img, label, _ = synth.render_wide_scene(path_angle_deg=40, yaw_deg=10)
+    a = analyze_label(label, PhotoKind.WIDE, img)
+    rect = rectify_by_crosswalk(img, label)
+    a.rectification = rect.model_copy(update={"ok": False, "reason": "시험: 보정 실패로 가정"})
+    from pipeline.rules.c_rules import C6Config, check_c6
+
+    rough = C6Config(use_rough=True)
+    assert any(f.code == "C6" and "대략" in f.message for f in check_c6(a, label, rough))
+    assert check_c6(a, label) == []  # 기본은 꺼져 있음
+    img, label, _ = synth.render_wide_scene(yaw_deg=10)
+    a = analyze_label(label, PhotoKind.WIDE, img)
+    a.rectification = rectify_by_crosswalk(img, label).model_copy(update={"ok": False})
+    assert check_c6(a, label, rough) == []
+
+
+def test_rectify_without_crosswalk_does_not_crash():
+    import numpy as np
+
+    from pipeline.rectify import rectify_by_crosswalk
+
+    r = rectify_by_crosswalk(np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100), np.uint8))
+    assert not r.ok and r.walk_vp is None
