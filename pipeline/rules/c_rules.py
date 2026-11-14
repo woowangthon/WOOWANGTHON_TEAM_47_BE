@@ -184,10 +184,57 @@ def check_direction_and_connection(
     return findings
 
 
-def check_c4(wide: PhotoAnalysis) -> list[Finding]:
-    """C4: 진입부 ROI 돌출선 방향 vs 횡단보도 진행축, 진입부 점형 유무.
+@dataclass
+class C4Config:
+    max_ridge_dev_deg: float = 20.0  # 선형 돌출선과 횡단보도 진행축의 허용 각도 차
+    min_conf: float = 0.5
 
-    TODO: wide.rectification.crosswalk_axis_deg 와 진입부 RoiAnalysis.ridge_angle_deg 비교.
-    시점 보정(rectify.py)이 구현되기 전까지는 H2로 보류된다.
+
+def check_c4(wide: PhotoAnalysis, cfg: Optional[C4Config] = None) -> list[Finding]:
+    """C4: 횡단보도 진입부 점형 유무 + 진입 직전 선형 돌출선 방향 vs 횡단보도 진행축.
+
+    시점 보정(rectify.py)이 성공했을 때만 judge에서 불린다. 진입부 무늬를 읽지 못하면 H2로 보류.
     """
-    return []
+    from ..rectify import angle_diff  # 순환 import 방지
+
+    cfg = cfg or C4Config()
+    rect = wide.rectification
+    if rect is None or not rect.ok or rect.crosswalk_axis_deg is None:
+        return []
+    ent = next((r for r in wide.rois if r.role == "entrance"), None)
+    app = next((r for r in wide.rois if r.role == "approach"), None)
+    if ent is None and app is None:  # 블록이 횡단보도에 닿지 않음 → C1에서 이미 다룸
+        return []
+
+    findings: list[Finding] = []
+    checked: list[str] = []
+    if ent and ent.block is not None and ent.confidence >= cfg.min_conf:
+        checked.append("진입부 점형")
+        if ent.block == MaskClass.LINEAR:
+            findings.append(Finding(
+                code="C4", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+                message="횡단보도 진입부에 점형 블록이 없고 선형만 깔려 있음",
+                location=ent.center, clause=CLAUSES["C4"], suggestion=SUGGESTIONS["C4"],
+                confidence=round(0.7 * ent.confidence, 2),
+            ))
+    if app and app.block == MaskClass.LINEAR and app.ridge_angle_deg is not None and app.confidence >= cfg.min_conf:
+        checked.append("진행 방향")
+        dev = angle_diff(app.ridge_angle_deg, rect.crosswalk_axis_deg)
+        if dev > cfg.max_ridge_dev_deg:
+            findings.append(Finding(
+                code="C4", verdict=Verdict.SUSPECTED, photo=PhotoKind.WIDE,
+                message=f"진입부 선형 블록 돌출선이 횡단보도 건너는 방향과 {dev:.0f}° 어긋남",
+                location=app.center, clause=CLAUSES["C4"], suggestion=SUGGESTIONS["C4"],
+                confidence=round(0.7 * app.confidence, 2),
+            ))
+    if findings:
+        return findings
+    if checked:
+        return [Finding(
+            code="C4", verdict=Verdict.NORMAL, photo=PhotoKind.WIDE,
+            message=f"횡단보도 진입부 확인 정상 ({', '.join(checked)})", confidence=0.6,
+        )]
+    return [Finding(
+        code="H2", verdict=Verdict.HOLD, photo=PhotoKind.WIDE,
+        message="진입부 블록 무늬가 작거나 흐려 진입 방향(C4) 판정 보류. 진입부가 더 크게 나오게 찍어 주세요",
+    )]

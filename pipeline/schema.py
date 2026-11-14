@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"  # 0.1.1: Rectification.px_per_m, RoiAnalysis.role 추가 (C4)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +124,7 @@ class Rectification(BaseModel):
     crosswalk_axis_deg: Optional[float] = Field(
         None, description="보정 평면에서 횡단보도 진행축 각도 (0=오른쪽, 반시계 +)"
     )
+    px_per_m: Optional[float] = Field(None, description="보정 평면에서 1m가 몇 단위인지 (횡단보도 줄 간격으로 추정)")
     reason: Optional[str] = None
 
 
@@ -131,6 +132,9 @@ class RoiAnalysis(BaseModel):
     """꺾임·분기점·진입부 ROI의 블록 종류와 돌출선 방향."""
 
     photo: PhotoKind
+    role: Optional[Literal["node", "entrance", "approach"]] = Field(
+        None, description="node=꺾임·분기점(M3), entrance=횡단보도 진입부, approach=진입부 직전 선형 구간(C4)"
+    )
     node_id: Optional[int] = None
     center: Point
     size_px: int

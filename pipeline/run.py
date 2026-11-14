@@ -9,6 +9,7 @@ from typing import Optional
 
 import numpy as np
 
+from .crosswalk import drop_unstriped
 from .rectify import analyze_rois, rectify_by_crosswalk
 from .rules import judge
 from .schema import InspectionResult, PhotoAnalysis, PhotoKind
@@ -46,6 +47,9 @@ def run_inspection(
         close = analyze_label(label, PhotoKind.CLOSE, close_bgr, seg)
     if wide_bgr is not None:
         wide_label, seg = segmenter.predict(wide_bgr, PhotoKind.WIDE)
+        # 줄무늬 없는 횡단보도 오검출 제거 후 면적 다시 계산 (H3 판정에 쓰임)
+        wide_label, _ = drop_unstriped(wide_bgr, wide_label)
+        seg = seg.model_copy(update={"class_area_px": summarize(wide_label, PhotoKind.WIDE).class_area_px})
         wide = analyze_label(wide_label, PhotoKind.WIDE, wide_bgr, seg)
     result = judge(close, wide, wide_label)
     result.inspection_id = inspection_id
