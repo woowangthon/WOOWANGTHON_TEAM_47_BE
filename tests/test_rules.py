@@ -8,16 +8,23 @@ def _m3(result):
     return [f for f in result.findings if f.code == "M3"]
 
 
+def _photo(label):
+    """M3는 서비스 경로(사진 한 장 판정 → 시경 shape_rules.analyze_m3)로 확인한다."""
+    from pipeline.rules import judge_photo
+
+    return judge_photo(analyze_label(label, PhotoKind.CLOSE), label)
+
+
 def test_m3_normal_when_turn_is_dot():
     label, _ = synth.l_turn(dot_at_turn=True)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     assert [f.verdict for f in _m3(r)] == [Verdict.NORMAL]
     assert r.overall == Verdict.NORMAL
 
 
 def test_m3_suspected_when_turn_is_linear():
     label, _ = synth.l_turn(dot_at_turn=False)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     bad = [f for f in _m3(r) if f.verdict == Verdict.SUSPECTED]
     assert len(bad) == 1 and bad[0].location is not None
     assert r.overall == Verdict.SUSPECTED
@@ -25,7 +32,7 @@ def test_m3_suspected_when_turn_is_linear():
 
 def test_m3_suspected_at_branch():
     label, _ = synth.t_branch(dot_at_branch=False)
-    r = judge(analyze_label(label, PhotoKind.CLOSE), None)
+    r = _photo(label)
     assert any(f.verdict == Verdict.SUSPECTED for f in _m3(r))
 
 
