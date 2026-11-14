@@ -162,3 +162,24 @@ def test_downloaded_photo_is_cached(supa):
     assert storage.load_photo(r.inspection_id)  # Supabase에서 받음
     supa.storage.files.clear()  # 저장소가 사라져도
     assert storage.load_photo(r.inspection_id)  # 메모리에 남아 있음
+
+
+def test_submit_report_updates_supabase(supa):
+    r = storage.save_report(_result(), IMG)
+    s = storage.submit_report(r.inspection_id, Location(address="우암동", memo="내용", lat=36.6, lng=127.5))
+    row = supa.db["inspections"][r.inspection_id]
+    assert s.location.address == "우암동" and row["address"] == "우암동" and row["place_memo"] == "내용"
+    storage._memory.clear()  # 재시작 후에도 Supabase 값으로 보임
+    assert storage.load_result(r.inspection_id).location.lat == 36.6
+
+
+def test_submit_report_errors(supa):
+    assert storage.submit_report("nope", Location(address="x")) is None
+    r = storage.save_report(_result(), IMG)
+    storage.update_report(r.inspection_id, ReportUpdate(status=ReportStatus.REVIEWING))
+    with pytest.raises(storage.ReportClosed):
+        storage.submit_report(r.inspection_id, Location(address="x"))
+    r2 = storage.save_report(_result("00000000-0000-0000-0000-0000000000c2"), IMG)
+    supa.db["fail"] = True
+    with pytest.raises(RuntimeError):  # 저장 실패를 숨기지 않음 (시민에게 '접수됨'을 잘못 보여 주지 않게)
+        storage.submit_report(r2.inspection_id, Location(address="x"))

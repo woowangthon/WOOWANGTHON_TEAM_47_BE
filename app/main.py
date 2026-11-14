@@ -26,6 +26,7 @@ from pipeline.schema import (
     Location,
     ReportDetail,
     ReportStatus,
+    ReportSubmit,
     ReportSummary,
     ReportUpdate,
     Verdict,
@@ -179,6 +180,25 @@ def get_inspection(inspection_id: str) -> InspectionResult:
     if result is None:
         raise HTTPException(404, "점검 건을 찾을 수 없음")
     return result
+
+
+@app.post("/api/inspections/{inspection_id}/report", response_model=ReportSummary,
+          dependencies=[Depends(_rate_limit)])
+def submit_report(inspection_id: str, body: ReportSubmit) -> ReportSummary:
+    """시민 신고 접수: 결과 화면에서 '신고하기'로 발견 위치·내용을 보낸다. 관리자 목록에 위치가 채워져 나온다.
+    처리 상태가 '접수'인 동안은 다시 보내면 덮어쓴다. 관리자가 확인을 시작했으면 409."""
+    loc = Location(address=body.address.strip(), memo=_blank(body.memo), lat=body.lat, lng=body.lng)
+    if not loc.address:
+        raise HTTPException(422, "발견 위치를 입력해 주세요")
+    try:
+        r = storage.submit_report(inspection_id, loc)
+    except storage.ReportClosed:
+        raise HTTPException(409, "이미 관리자가 확인 중인 신고라 수정할 수 없음")
+    except Exception as e:
+        raise HTTPException(502, f"신고 저장 실패: {type(e).__name__}")
+    if r is None:
+        raise HTTPException(404, "점검 건을 찾을 수 없음")
+    return r
 
 
 @app.get("/api/inspections/{inspection_id}/photo", responses={200: {"content": {"image/jpeg": {}}}})

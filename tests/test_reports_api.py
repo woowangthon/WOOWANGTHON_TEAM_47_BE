@@ -88,3 +88,37 @@ def test_health_deep(client):
     assert r.status_code == 200 and r.json()["storage"] == "memory"
     main.state.pop("segmenter")
     assert client.get("/api/health/deep").status_code == 503
+
+
+def test_citizen_report_submit(client, monkeypatch):
+    """결과 화면 → 신고 화면: 발견 위치·내용을 접수하면 결과·관리자 목록에 위치가 채워진다."""
+    rid = _post(client).json()["inspection_id"]
+    body = {"address": " 청주시 우암동 우암초 앞 ", "memo": "선형 블록이 횡단보도로 이어지지 않음", "lat": 36.65, "lng": 127.49}
+    r = client.post(f"/api/inspections/{rid}/report", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "received"
+    assert r.json()["location"] == {"address": "청주시 우암동 우암초 앞", "memo": "선형 블록이 횡단보도로 이어지지 않음",
+                                    "lat": 36.65, "lng": 127.49}
+    assert client.get(f"/api/inspections/{rid}").json()["location"]["address"] == "청주시 우암동 우암초 앞"
+
+    # 접수 상태인 동안은 다시 보내면 덮어쓰기
+    r = client.post(f"/api/inspections/{rid}/report", json={"address": "우암동 횡단보도"})
+    assert r.json()["location"] == {"address": "우암동 횡단보도", "memo": None, "lat": None, "lng": None}
+
+    monkeypatch.setenv("ADMIN_TOKEN", "s3cret")
+    h = {"X-Admin-Token": "s3cret"}
+    listed = {x["inspection_id"]: x for x in client.get("/api/admin/inspections", headers=h).json()}
+    assert listed[rid]["location"]["address"] == "우암동 횡단보도"
+
+    # 관리자가 확인을 시작하면 시민 쪽 수정은 잠김
+    client.patch(f"/api/admin/inspections/{rid}", json={"status": "reviewing"}, headers=h)
+    assert client.post(f"/api/inspections/{rid}/report", json={"address": "다른 곳"}).status_code == 409
+
+
+def test_citizen_report_validation(client):
+    rid = _post(client).json()["inspection_id"]
+    assert client.post("/api/inspections/nope/report", json={"address": "x"}).status_code == 404
+    assert client.post(f"/api/inspections/{rid}/report", json={"address": ""}).status_code == 422
+    assert client.post(f"/api/inspections/{rid}/report", json={"address": "   "}).status_code == 422
+    assert client.post(f"/api/inspections/{rid}/report", json={"address": "x", "lat": 123}).status_code == 422
+    assert client.post(f"/api/inspections/{rid}/report", json={"address": "x" * 201}).status_code == 422
