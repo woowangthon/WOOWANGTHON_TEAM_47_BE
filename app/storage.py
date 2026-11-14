@@ -248,6 +248,26 @@ def get_report(rid: str) -> Optional[ReportDetail]:
                         updated_at=row.get("updated_at"), result=_result(row))
 
 
+class ReportClosed(Exception):
+    """관리자가 이미 처리를 시작한 신고라 시민이 위치·내용을 바꿀 수 없음."""
+
+
+def submit_report(rid: str, loc: Location) -> Optional[ReportSummary]:
+    """시민 신고 접수: 위치·내용을 저장한다. 처리 상태가 '접수'일 때만 (관리자가 보기 시작하면 잠김).
+    Supabase 저장이 실패하면 예외를 그대로 올린다 (시민에게 '접수됨'을 잘못 보여 주면 안 됨)."""
+    row = _get_row(rid)
+    if not row:
+        return None
+    if (row.get("status") or ReportStatus.RECEIVED.value) != ReportStatus.RECEIVED.value:
+        raise ReportClosed(rid)
+    patch = {"address": loc.address, "place_memo": loc.memo, "lat": loc.lat, "lng": loc.lng, "updated_at": _now()}
+    client = _client()
+    if client is not None:
+        client.table(_table()).update(patch).eq("id", rid).execute()
+    row.update(patch)
+    return _summary(row)
+
+
 def update_report(rid: str, upd: ReportUpdate) -> Optional[ReportDetail]:
     row = _get_row(rid)
     if not row:

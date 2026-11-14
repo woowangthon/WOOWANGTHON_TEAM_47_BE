@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.3.1"  # 0.3.1: Segmentation.unknown_block_area_px (이중 검출) / 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope) / 0.3.0: 신고 위치·사진·처리 상태
+SCHEMA_VERSION = "0.3.2"  # 0.3.2: 시민 신고 접수 ReportSubmit, Location.memo 1000자 / 0.3.1: Segmentation.unknown_block_area_px (이중 검출) / 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope) / 0.3.0: 신고 위치·사진·처리 상태
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ class Location(BaseModel):
     """신고 위치. 모두 선택 입력."""
 
     address: Optional[str] = Field(None, max_length=200, description="주소 또는 장소 이름 (사용자 입력)")
-    memo: Optional[str] = Field(None, max_length=500, description="장소 설명 메모 (예: OO초 앞 횡단보도)")
+    memo: Optional[str] = Field(None, max_length=1000, description="장소 설명·신고 내용 메모 (예: OO초 앞 횡단보도)")
     lat: Optional[float] = Field(None, ge=-90, le=90, description="위도 (브라우저 위치 권한으로 받은 값)")
     lng: Optional[float] = Field(None, ge=-180, le=180, description="경도")
 
@@ -241,6 +241,15 @@ class ReportDetail(ReportSummary):
     admin_memo: Optional[str] = None
     updated_at: Optional[str] = None
     result: InspectionResult
+
+
+class ReportSubmit(BaseModel):
+    """시민 신고 접수 (결과 화면 → 신고 화면). 점검 때 저장한 위치를 이 값으로 바꾼다."""
+
+    address: str = Field(..., min_length=1, max_length=200, description="발견 위치 (주소·장소 이름)")
+    memo: Optional[str] = Field(None, max_length=1000, description="확인이 필요한 내용")
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
 
 
 class ReportUpdate(BaseModel):

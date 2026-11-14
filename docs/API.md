@@ -5,7 +5,7 @@
 | **배포 (EC2, HTTPS)** | `https://3-107-144-61.sslip.io` |
 | 로컬 개발 | `http://localhost:8000` (`uvicorn app.main:app --port 8000`) |
 
-스키마 버전 `0.3.1`. 브라우저에서 `https://3-107-144-61.sslip.io/docs`를 열면 모든 API를 직접 눌러 볼 수 있다.
+스키마 버전 `0.3.2`. 브라우저에서 `https://3-107-144-61.sslip.io/docs`를 열면 모든 API를 직접 눌러 볼 수 있다.
 
 - 프론트 배포 주소(예: Vercel)는 서버 CORS 허용 목록에 넣어야 브라우저 요청이 통과한다 → 주소가 정해지면 백엔드 담당에게 알려 줄 것
 - 위치(`navigator.geolocation`)는 HTTPS 페이지에서만 동작한다 (localhost는 예외)
@@ -19,7 +19,7 @@
 | --- | --- | --- |
 | `photo` | ✅ | 사진 한 장 (JPG·PNG). **최대 15MB.** 폰 사진은 업로드 전에 긴 변 2000px 정도로 줄이면 빠르다 |
 | `address` | | 주소 또는 장소 이름 (최대 200자) |
-| `memo` | | 장소 설명 (예: "우암초 앞 횡단보도", 최대 500자) |
+| `memo` | | 장소 설명 (예: "우암초 앞 횡단보도", 최대 1000자) |
 | `lat`, `lng` | | 위도·경도. 브라우저 `navigator.geolocation`으로 받은 값 |
 
 응답 `200`: InspectionResult (아래). 오류: `400` 사진 없음·읽기 실패, `413` 너무 큼, `422` 위치 값 오류,
@@ -36,6 +36,23 @@ const result = await res.json();
 
 ### 결과 다시 보기 — `GET /api/inspections/{id}`
 접수 때와 같은 InspectionResult. 결과 페이지 주소에 `id`를 넣어 두면 새로고침·공유해도 다시 불러올 수 있다.
+
+### 신고 접수 — `POST /api/inspections/{id}/report`
+결과 화면에서 "신고하기"를 누른 뒤 발견 위치·내용을 보낸다. JSON 본문:
+
+```json
+{"address": "청주시 우암동 우암초 앞 횡단보도", "memo": "선형 블록이 횡단보도로 이어지지 않음", "lat": 36.65, "lng": 127.49}
+```
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `address` | ✅ | 발견 위치 (최대 200자, 빈칸 불가) |
+| `memo` | | 확인이 필요한 내용 (최대 1000자) |
+| `lat`, `lng` | | 위도·경도 (선택) |
+
+응답: 관리자 목록 한 줄과 같은 형식 (`inspection_id, status, codes, location …`). 관리자 신고 목록에 이 위치가 나온다.
+처리 상태가 `received`(접수)인 동안은 다시 보내면 덮어쓴다.
+오류: `404` 없는 점검, `409` 관리자가 이미 확인 중, `422` 값 오류, `502` 저장 실패(접수되지 않음 → 다시 시도 안내).
 
 ### 사진 — `GET /api/inspections/{id}/photo`
 저장된 사진 (긴 변 1600px JPEG). `<img src={API + result.photo_url} />`로 바로 쓴다.
