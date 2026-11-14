@@ -1,7 +1,9 @@
+"""Path structure regression tests (dot-tile junctions are PASS nodes)."""
+
 import pytest
 
 from pipeline import synth
-from pipeline.schema import NodeType, PhotoKind
+from pipeline.schema import MaskClass, NodeType, PhotoKind
 from pipeline.skeleton import end_direction, extract_path
 
 
@@ -10,23 +12,54 @@ def _count(path, t):
 
 
 @pytest.mark.parametrize(
-    "scene",
-    [synth.straight, synth.l_turn, lambda: synth.l_turn(False), synth.t_branch, lambda: synth.t_branch(False)],
+    "scene, dot_corner",
+    [
+        (synth.straight, False),
+        (synth.l_turn, True),
+        (lambda: synth.l_turn(False), False),
+        (synth.t_branch, False),
+        (lambda: synth.t_branch(False), False),
+    ],
 )
-def test_node_counts(scene):
+def test_node_counts(scene, dot_corner):
     label, exp = scene()
     path = extract_path(label, PhotoKind.CLOSE)
     assert _count(path, NodeType.END) == exp["ends"]
-    assert _count(path, NodeType.TURN) == exp["turns"]
     assert _count(path, NodeType.BRANCH) == exp["branches"]
     assert len(path.component_area_px) == 1
 
+    if dot_corner:
+        # 점형이 L자 모서리에 있으면 선형 끝점 2개가 점형 노드에 연결된다.
+        # 점형 노드는 degree=2 이므로 PASS이고, TURN 노드가 아니다.
+        assert _count(path, NodeType.TURN) == 0
+        dot_passes = [
+            n for n in path.nodes
+            if n.block == MaskClass.DOT and n.type == NodeType.PASS
+        ]
+        assert len(dot_passes) == 1
+        assert len(path.edges_of(dot_passes[0].id)) == 2
+    else:
+        assert _count(path, NodeType.TURN) == exp["turns"]
 
-def test_turn_location():
-    label, _ = synth.l_turn()
+
+@pytest.mark.parametrize(
+    "with_dot, expected_type, expected_block",
+    [
+        (True, NodeType.PASS, MaskClass.DOT),
+        (False, NodeType.TURN, MaskClass.LINEAR),
+    ],
+)
+def test_turn_location(with_dot, expected_type, expected_block):
+    label, _ = synth.l_turn(with_dot)
     path = extract_path(label, PhotoKind.CLOSE)
-    turn = next(n for n in path.nodes if n.type == NodeType.TURN)
-    assert abs(turn.pt.x - 200) < 15 and abs(turn.pt.y - 250) < 15
+    candidates = [
+        n for n in path.nodes
+        if n.type == expected_type and n.block == expected_block
+    ]
+    assert len(candidates) == 1
+    corner = candidates[0]
+    assert abs(corner.pt.x - 200) < 15
+    assert abs(corner.pt.y - 250) < 15
 
 
 def test_end_direction_points_outward():
