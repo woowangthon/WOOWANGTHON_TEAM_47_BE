@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.1.2"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6 코드, Rectification.walk_vp
+SCHEMA_VERSION = "0.2.0"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -189,5 +189,10 @@ class InspectionResult(BaseModel):
     inspection_id: Optional[str] = None
     overall: Verdict
     findings: list[Finding] = Field(default_factory=list)
-    close: Optional[PhotoAnalysis] = None
-    wide: Optional[PhotoAnalysis] = None
+    photo: Optional[PhotoAnalysis] = Field(None, description="사진 한 장 구조의 분석 결과 (0.2.0부터 기본)")
+    scope: dict[str, str] = Field(
+        default_factory=dict,
+        description='계열별 판정 여부와 이유. 예: {"C": "판정", "M": "건너뜀 (블록이 작게 찍혀 ...)"}',
+    )
+    close: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")
+    wide: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")

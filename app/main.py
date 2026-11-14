@@ -66,17 +66,20 @@ async def _decode(f: Optional[UploadFile]) -> Optional[np.ndarray]:
 
 @app.post("/api/inspections", response_model=InspectionResult)
 async def create_inspection(
-    close: Optional[UploadFile] = File(None, description="근접 사진"),
-    wide: Optional[UploadFile] = File(None, description="넓은 사진"),
+    photo: Optional[UploadFile] = File(None, description="점검할 사진 한 장 (구도·거리 제한 없음)"),
+    close: Optional[UploadFile] = File(None, description="(호환용) 예전 근접 사진 칸"),
+    wide: Optional[UploadFile] = File(None, description="(호환용) 예전 넓은 사진 칸"),
 ) -> InspectionResult:
-    if close is None and wide is None:
-        raise HTTPException(400, "근접 사진과 넓은 사진 중 하나 이상 필요")
+    """사진 한 장을 받아 판정한다. 예전 앱이 close/wide로 보내도 그중 한 장(넓은 사진 우선)을 쓴다."""
+    upload = photo or wide or close
+    if upload is None:
+        raise HTTPException(400, "사진이 필요함 (photo)")
     if "segmenter" not in state:
         raise HTTPException(503, "분할 모델 가중치가 없음 (BLOCK_WEIGHTS·SCENE_WEIGHTS 확인)")
 
-    from pipeline.run import run_inspection
+    from pipeline.run import run_photo
 
-    result = run_inspection(state["segmenter"], await _decode(close), await _decode(wide), str(uuid.uuid4()))
+    result = run_photo(state["segmenter"], await _decode(upload), str(uuid.uuid4()))
     storage.save_result(result)
     return result
 
