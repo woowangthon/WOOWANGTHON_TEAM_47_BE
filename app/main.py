@@ -25,11 +25,18 @@ state: dict = {}
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    weights = Path(os.getenv("WEIGHTS_PATH", "weights/best.pt"))
-    if weights.exists():
+    # 두 모델 통합 (블록 + 장면). 둘 다 있으면 DualSegmenter, 아니면 예전 방식(모델 하나)
+    block = Path(os.getenv("BLOCK_WEIGHTS", "weights/v4_best.pt"))
+    scene = Path(os.getenv("SCENE_WEIGHTS", "weights/scene_v1_best.pt"))
+    legacy = Path(os.getenv("WEIGHTS_PATH", "weights/best.pt"))
+    if block.exists() and scene.exists():
+        from pipeline.dual_segment import DualSegmenter
+
+        state["segmenter"] = DualSegmenter(block, scene)
+    elif legacy.exists():
         from pipeline.segment import Segmenter
 
-        state["segmenter"] = Segmenter(weights)
+        state["segmenter"] = Segmenter(legacy)
     yield
     state.clear()
 
@@ -65,7 +72,7 @@ async def create_inspection(
     if close is None and wide is None:
         raise HTTPException(400, "근접 사진과 넓은 사진 중 하나 이상 필요")
     if "segmenter" not in state:
-        raise HTTPException(503, "분할 모델 가중치가 없음 (WEIGHTS_PATH 확인)")
+        raise HTTPException(503, "분할 모델 가중치가 없음 (BLOCK_WEIGHTS·SCENE_WEIGHTS 확인)")
 
     from pipeline.run import run_inspection
 

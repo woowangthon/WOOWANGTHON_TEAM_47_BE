@@ -44,7 +44,7 @@ class StripeStats:
 
 def stripe_stats(gray: np.ndarray, mask: np.ndarray, cfg: StripeConfig) -> StripeStats | None:
     """gray, mask는 WORK_LONG_SIDE 크기 기준."""
-    inner = cv2.erode(mask.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)  # 마스크 테두리 경계 제외
+    inner = cv2.erode(mask.astype(np.uint8), np.ones((15, 15), np.uint8)).astype(bool)  # 마스크 테두리(연석·차선 경계 한 줄)는 빼고 잼
     if inner.sum() < 500:
         return None
     g = cv2.GaussianBlur(gray.astype(np.float32), (0, 0), 1.5)
