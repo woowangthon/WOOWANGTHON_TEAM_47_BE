@@ -44,6 +44,7 @@ class RectifyConfig:
     max_bar_angle_std: float = 6.0  # 보정 후 줄들이 평행해야 함
     max_gap_cv: float = 0.3  # 보정 후 줄 간격이 고르게 나와야 함
     min_bar_area: float = 0.0004  # 사진 면적 대비
+    assumed_pitch_deg: float = 25.0  # 대략 소실점: 흰 줄이 사진에서 평행하게 보일 때 가정하는 카메라 숙임 각도
 
 
 def angle_std(dx: float, dy: float) -> float:
@@ -94,6 +95,29 @@ def _vanishing_point(lines: list[np.ndarray]) -> np.ndarray:
     return np.linalg.svd(L)[2][-1]
 
 
+def rough_walk_vp(bars, w: int, h: int, cfg: RectifyConfig) -> list[float]:
+    """흰 줄 방향만으로 '건너는 방향(P)'의 소실점을 대략 구한다 (작업 크기 좌표, 동차).
+
+    가정: 카메라가 옆으로 기울지 않음(지평선이 수평), 초점거리 = 긴 변 × focal_ratio.
+    흰 줄(차도 방향 T)과 건너는 방향(P)은 실제로 직각이므로, T 소실점과 직교하는 지평선 위의 점이 P 소실점.
+    T 소실점이 사진 밖 아주 멀리(줄이 사진에서 평행)면 지평선 높이를 숙임 각도로 가정한다.
+    """
+    f = cfg.focal_ratio * max(w, h)
+    cx, cy = w / 2, h / 2
+    big = 20 * max(w, h)
+    v = _vanishing_point([np.cross([*c, 1.0], [*(c + u), 1.0]) for c, u in bars])
+    if abs(v[2]) > 1e-12 and math.hypot(v[0] / v[2] - cx, v[1] / v[2] - cy) < big:
+        xT, yT = v[0] / v[2], v[1] / v[2]
+        dx = xT - cx
+        if abs(dx) < 1e-6 * max(w, h):
+            return [1.0, 0.0, 0.0]
+        return [cx - ((yT - cy) ** 2 + f * f) / dx, yT, 1.0]
+    d = np.array([v[0], v[1]]) / math.hypot(v[0], v[1])
+    yh = cy - f * math.tan(math.radians(cfg.assumed_pitch_deg))
+    t = -d[1] * (yh - cy)
+    return [cx + t * d[0], yh + t * d[1], 1.0]
+
+
 def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
                          cfg: Optional[RectifyConfig] = None) -> Rectification:
     cfg = cfg or RectifyConfig()
@@ -107,8 +131,16 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
     cw = cv2.erode(cw, np.ones((3, 3), np.uint8)).astype(bool)
 
     bars = _find_bars(gray, cw, round(cfg.min_bar_area * w * h))
+    walk_vp = None
+    if len(bars) >= 3:  # 보정이 실패해도 C6용 대략 소실점은 남긴다 (원본 좌표로 변환)
+        vx, vy, vw = rough_walk_vp(bars, w, h, cfg)
+        walk_vp = [vx / s, vy / s, vw] if vw else [vx, vy, 0.0]
+
+    def fail(reason: str) -> Rectification:  # 흰 줄을 찾은 뒤의 실패는 walk_vp를 같이 담는다
+        return Rectification(ok=False, reason=reason, walk_vp=walk_vp)
+
     if len(bars) < cfg.min_bars:
-        return _fail(f"횡단보도 흰 줄이 {len(bars)}개만 보임 (최소 {cfg.min_bars}개)")
+        return fail(f"횡단보도 흰 줄이 {len(bars)}개만 보임 (최소 {cfg.min_bars}개)")
 
     # 1. 긴 축 방향을 한쪽으로 맞추고, 줄 방향에 수직인 '가로지르는 선' 위 위치 t로 정렬
     #    (같은 간격 평행선은 어떤 가로지르는 선이든 같은 간격으로 자른다)
@@ -136,7 +168,7 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
         ts[i:i + 2] = [(ts[i] + ts[i + 1]) / 2]
     ts = np.array(ts)
     if len(ts) < cfg.min_bars:
-        return _fail(f"서로 다른 흰 줄이 {len(ts)}개만 보임 (최소 {cfg.min_bars}개)")
+        return fail(f"서로 다른 흰 줄이 {len(ts)}개만 보임 (최소 {cfg.min_bars}개)")
 
     # 2. 같은 간격 줄들의 사진 속 위치 t_k = (a k + b) / (c k + 1) → k→∞ 가 두 번째 소실점
     #    간격이 이웃의 약 2배면 줄 하나를 못 찾은 것으로 보고 k를 2칸 건너뛴다
@@ -152,7 +184,7 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
     unit = np.diff(ts) / np.diff(k)  # 줄 한 칸 간격 (멀수록 좁음)
     local = np.r_[unit[0], (unit[:-1] + unit[1:]) / 2, unit[-1]]
     if (np.abs(pred - ts) > 0.3 * local).any():
-        return _fail("흰 줄 간격이 고르지 않음 (빠진 줄 또는 오검출)")
+        return fail("흰 줄 간격이 고르지 않음 (빠진 줄 또는 오검출)")
     v_cross = np.array([c_ * p0[0] + a * d[0], c_ * p0[1] + a * d[1], c_])
     v_bar = _vanishing_point([np.cross([*c, 1.0], [*(c + u), 1.0]) for c, u in bars])
 
@@ -161,18 +193,18 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
     K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1.0]])
     horizon = np.cross(v_bar, v_cross)
     if np.linalg.norm(horizon) < 1e-12:
-        return _fail("지평선 계산 실패")
+        return fail("지평선 계산 실패")
     n = K.T @ horizon
     n /= np.linalg.norm(n)
     ys, xs = np.nonzero(cw)
     side = np.c_[xs, ys, np.ones_like(xs)] @ horizon
     if min((side > 0).mean(), (side < 0).mean()) > 0.02:
-        return _fail("지평선이 횡단보도를 가로지름 (줄 검출 오류)")
+        return fail("지평선이 횡단보도를 가로지름 (줄 검출 오류)")
     if n @ np.linalg.solve(K, [xs.mean(), ys.mean(), 1.0]) < 0:
         n = -n
     tilt = math.degrees(math.acos(np.clip(n[2], -1, 1)))
     if tilt > cfg.max_tilt_deg:
-        return _fail(f"지면과 거의 나란히 찍힘 ({tilt:.0f}°)")
+        return fail(f"지면과 거의 나란히 찍힘 ({tilt:.0f}°)")
     axis = np.cross(n, [0, 0, 1.0])
     ang = math.acos(np.clip(n[2], -1, 1))
     R = cv2.Rodrigues(axis / np.linalg.norm(axis) * ang)[0] if np.linalg.norm(axis) > 1e-9 else np.eye(3)
@@ -187,12 +219,12 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
     t_ang = np.angle(z) / 2
     ang_std = math.degrees(math.sqrt(max(0.0, -2 * math.log(max(abs(z), 1e-9)))) / 2)
     if ang_std > cfg.max_bar_angle_std:
-        return _fail(f"보정 후에도 흰 줄이 평행하지 않음 (흩어짐 {ang_std:.1f}°)")
+        return fail(f"보정 후에도 흰 줄이 평행하지 않음 (흩어짐 {ang_std:.1f}°)")
     nrm = np.array([-math.sin(t_ang), math.cos(t_ang)])
     offs = np.sort(apply_h(Hw, np.array([c for c, _ in bars])) @ nrm)
     gaps = np.diff(offs)
     if gaps.mean() <= 0 or gaps.std() / gaps.mean() > cfg.max_gap_cv:
-        return _fail("보정 후 흰 줄 간격이 고르지 않음")
+        return fail("보정 후 흰 줄 간격이 고르지 않음")
 
     S = np.diag([s, s, 1.0])
     return Rectification(
@@ -200,6 +232,7 @@ def rectify_by_crosswalk(image_bgr: np.ndarray, label: np.ndarray,
         homography=(Hw @ S).tolist(),  # 원본 사진 픽셀 → 보정 평면
         crosswalk_axis_deg=angle_std(*nrm),  # 줄 긴 축(T)에 수직 = 건너는 방향(P)
         px_per_m=float(gaps.mean() / cfg.stripe_period_m),
+        walk_vp=walk_vp,
     )
 
 

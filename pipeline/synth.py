@@ -172,6 +172,24 @@ def _ridges(img, lab, x0, x1, y0, y1, offset_deg, period_m=0.075, width_m=0.035)
     lab[v0:v1, u0:u1] = int(MaskClass.LINEAR)
 
 
+def _ridged_path(img, lab, end_xy, angle_deg, length_m=4.5, half_w=0.3, period_m=0.075, width_m=0.035):
+    """선형 블록 줄: end_xy(m)에서 뒤쪽으로 뻗고, 진행 방향(+Y)에서 angle_deg 만큼 돌아감. 돌출선은 줄 방향."""
+    a = np.radians(angle_deg)
+    back = np.array([np.sin(a), -np.cos(a)])  # 진입부에서 멀어지는 방향 (m, X·Y)
+    nrm = np.array([np.cos(a), np.sin(a)])
+    e = np.array(end_xy)
+    corners = [e + nrm * half_w, e - nrm * half_w, e - nrm * half_w + back * length_m, e + nrm * half_w + back * length_m]
+    poly = np.array([_top_px(*c) for c in corners], np.int32)
+    m = np.zeros(lab.shape, np.uint8)
+    cv2.fillPoly(m, [poly], 1)
+    vv, uu = np.nonzero(m)
+    s = uu * nrm[0] - vv * nrm[1]  # 평면 그림 좌표(v는 아래)에서 줄에 수직인 성분
+    on = (s % (period_m * PX_PER_M)) < width_m * PX_PER_M
+    img[vv, uu] = YELLOW
+    img[vv[on], uu[on]] = YELLOW_HI
+    lab[vv, uu] = int(MaskClass.LINEAR)
+
+
 def _dots(img, lab, x0, x1, y0, y1, pitch_m=0.05, r_m=0.0125):
     (u0, v1), (u1, v0) = _top_px(x0, y0), _top_px(x1, y1)
     img[v0:v1, u0:u1] = YELLOW
@@ -192,6 +210,8 @@ def render_wide_scene(
     yaw_deg: float = 0.0,
     roll_deg: float = 0.0,
     focal_ratio: float = 0.75,
+    path_angle_deg: float = 0.0,
+    linear: bool = True,
     img_size: tuple[int, int] = (1050, 1400),
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """넓은 사진: 인도 위 선형 경로 → 진입부 점형 → 연석 → 횡단보도.
@@ -199,6 +219,8 @@ def render_wide_scene(
     ridge_offset_deg  선형 돌출선을 진행 방향에서 돌린 각도 (0이면 정상, C4 방향 불일치 시험용)
     entrance_dot      False면 진입부까지 선형만 깔림 (C4 점형 누락 시험용)
     stripes           False면 횡단보도 라벨만 있고 줄무늬는 없음 (시점 보정 실패 → H2 시험용)
+    path_angle_deg    선형 줄 자체를 횡단보도 건너는 방향에서 돌린 각도 (C6 시험용)
+    linear            False면 진입부 점형만 있고 선형 유도가 없음 (C5 시험용)
 
     돌려주는 것: (사진 BGR, 라벨, meta). meta["top_to_img"]는 평면 그림 → 사진 호모그래피.
     """
@@ -219,7 +241,12 @@ def render_wide_scene(
         while y + 0.5 < SCENE_D_M:  # 흰 줄 50cm, 간격 45cm, 차도 방향(X)으로 길게
             top[_top_px(0, y + 0.5)[1]:_top_px(0, y)[1], :] = 225
             y += 0.95
-    _ridges(top, lab, 2.7, 3.3, 0.0, 4.25 if entrance_dot else CURB_Y, ridge_offset_deg)
+    if not linear:
+        pass
+    elif path_angle_deg:
+        _ridged_path(top, lab, (3.0, 4.25 if entrance_dot else CURB_Y), path_angle_deg)
+    else:
+        _ridges(top, lab, 2.7, 3.3, 0.0, 4.25 if entrance_dot else CURB_Y, ridge_offset_deg)
     if entrance_dot:
         _dots(top, lab, 2.4, 3.6, 4.25, CURB_Y)
     top = np.clip(top.astype(np.int16) + rng.normal(0, 4, top.shape).astype(np.int16), 0, 255).astype(np.uint8)

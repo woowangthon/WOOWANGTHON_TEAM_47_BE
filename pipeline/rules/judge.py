@@ -41,6 +41,7 @@ def judge(
             if partial:  # 횡단보도 없음: C4도 볼 수 없음
                 findings += partial
             else:
+                findings += c_rules.check_c6(wide, wide_label)
                 h2 = hold.check_h2(wide)
                 if h2:  # 보정 실패: 방향은 보류, 점형 유무만 라벨로 확인
                     findings += h2 + c_rules.check_c4_from_label(wide, wide_label)

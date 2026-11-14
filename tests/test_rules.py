@@ -174,3 +174,57 @@ def test_c4_entrance_with_dot_not_flagged_without_rectification():
     r = _wide(label)
     assert "C4" not in _codes(r, Verdict.SUSPECTED)
     assert "C1" in _codes(r, Verdict.NORMAL)
+
+
+# ---------------------------------------------------------------- C5 선형 유도 없음 · C6 선형 방향 불일치
+
+
+def test_c5_dot_at_entrance_but_no_linear():
+    r, _ = _wide_img(linear=False)
+    assert "C5" in _codes(r, Verdict.SUSPECTED)
+    assert "C1" not in _codes(r, Verdict.NORMAL)
+
+
+def test_c5_not_raised_for_normal_scene():
+    r, _ = _wide_img()
+    assert "C5" not in _codes(r)
+    assert "C6" not in _codes(r)
+
+
+def test_c6_when_linear_path_is_slanted():
+    r, _ = _wide_img(path_angle_deg=35)
+    c6 = [f for f in r.findings if f.code == "C6"]
+    assert c6 and c6[0].verdict == Verdict.SUSPECTED
+
+
+def test_c6_small_slant_tolerated():
+    r, _ = _wide_img(path_angle_deg=10)
+    assert "C6" not in _codes(r)
+
+
+def test_c6_rough_without_rectification():
+    """보정 실패여도 흰 줄로 구한 대략 소실점으로 비스듬한 줄을 잡는다."""
+    from pipeline.rectify import rectify_by_crosswalk
+
+    img, label, _ = synth.render_wide_scene(path_angle_deg=40, yaw_deg=10)
+    a = analyze_label(label, PhotoKind.WIDE, img)
+    rect = rectify_by_crosswalk(img, label)
+    a.rectification = rect.model_copy(update={"ok": False, "reason": "시험: 보정 실패로 가정"})
+    from pipeline.rules.c_rules import C6Config, check_c6
+
+    rough = C6Config(use_rough=True)
+    assert any(f.code == "C6" and "대략" in f.message for f in check_c6(a, label, rough))
+    assert check_c6(a, label) == []  # 기본은 꺼져 있음
+    img, label, _ = synth.render_wide_scene(yaw_deg=10)
+    a = analyze_label(label, PhotoKind.WIDE, img)
+    a.rectification = rectify_by_crosswalk(img, label).model_copy(update={"ok": False})
+    assert check_c6(a, label, rough) == []
+
+
+def test_rectify_without_crosswalk_does_not_crash():
+    import numpy as np
+
+    from pipeline.rectify import rectify_by_crosswalk
+
+    r = rectify_by_crosswalk(np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100), np.uint8))
+    assert not r.ok and r.walk_vp is None

@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.1.1"  # 0.1.1: Rectification.px_per_m, RoiAnalysis.role 추가 (C4)
+SCHEMA_VERSION = "0.1.2"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6 코드, Rectification.walk_vp
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +125,10 @@ class Rectification(BaseModel):
         None, description="보정 평면에서 횡단보도 진행축 각도 (0=오른쪽, 반시계 +)"
     )
     px_per_m: Optional[float] = Field(None, description="보정 평면에서 1m가 몇 단위인지 (횡단보도 줄 간격으로 추정)")
+    walk_vp: Optional[list[float]] = Field(
+        None, description="원본 사진에서 '횡단보도 건너는 방향'의 소실점 (동차좌표 x,y,w). "
+        "카메라가 기울지 않았다고 가정한 대략값으로, 보정이 실패해도 흰 줄이 3개 이상이면 채움 (C6)"
+    )
     reason: Optional[str] = None
 
 
@@ -165,7 +169,7 @@ class Verdict(str, Enum):
     HOLD = "hold"  # 판정 보류 (재촬영 요청)
 
 
-Code = Literal["M3", "M4", "C1", "C2", "C3", "C4", "H1", "H2", "H3", "H4"]
+Code = Literal["M3", "M4", "C1", "C2", "C3", "C4", "C5", "C6", "H1", "H2", "H3", "H4"]
 
 
 class Finding(BaseModel):
