@@ -7,6 +7,10 @@ judge_photo(): 사진 한 장 구조 (서비스 기본).
     - 블록이 크고 선명함 (M 관문) → M 계열
       관문을 못 넘으면: C 판정을 했으면 M은 건너뛰고, 아무것도 못 봤으면 H4 보류(가까이 찍기 안내)
 
+이중 검출로 "종류 모름 블록"(장면 모델은 점자블록이라는데 블록 모델이 못 찾은 영역)이 있으면
+C4·C5 '오류 의심'을 '보류'로 바꾼다. C4·C5는 "점형/선형이 없다"는 규칙이라 블록 모델이 블록을 놓치면
+정상 설치도 오류로 나오기 때문. C1·C2·C3·C6·M 계열은 건드리지 않는다.
+
 judge(): 예전 사진 두 장(근접·넓은) 구조. 테스트와 호환용으로 남겨 둔다.
 """
 
@@ -18,6 +22,31 @@ import numpy as np
 
 from ..schema import Finding, InspectionResult, PhotoAnalysis, Verdict
 from . import c_rules, hold, m_rules
+from .clauses import CLAUSES
+
+
+UNKNOWN_BLOCK_HOLD = ("블록 모델이 읽지 못한 점자블록이 있어 판정 보류. 블록이 더 크게 나오게 찍어 주세요")
+
+
+def _hold_if_unknown_blocks(findings: list[Finding], photo: Optional[PhotoAnalysis]) -> list[str]:
+    """종류 모름 블록이 있으면 C4·C5 의심을 보류로 바꾼다. 바꾼 코드 목록을 돌려준다."""
+    area = photo.segmentation.unknown_block_area_px if photo is not None else None
+    if not area:
+        return []
+    held = []
+    for f in findings:
+        if f.code in ("C4", "C5") and f.verdict == Verdict.SUSPECTED:
+            f.message = f"{UNKNOWN_BLOCK_HOLD} (원래 판정: {f.message})"
+            f.verdict, f.suggestion, f.clause = Verdict.HOLD, None, None
+            held.append(f.code)
+    return held
+
+
+def _attach_clauses(findings: list[Finding]) -> None:
+    """'오류 의심'인데 근거 조항이 비어 있으면 코드별 조항을 붙인다 (예: 시경 shape_rules의 M3)."""
+    for f in findings:
+        if f.verdict == Verdict.SUSPECTED and not f.clause:
+            f.clause = CLAUSES.get(f.code)
 
 
 def _c_family(wide: PhotoAnalysis, wide_label: Optional[np.ndarray], cfg: hold.HoldConfig) -> list[Finding]:
@@ -78,6 +107,8 @@ def judge_photo(
         findings += hold.h4_from_gate(why)
         scope["M"] = f"보류 ({why})"
 
+    _hold_if_unknown_blocks(findings, photo)  # 종합 판정 계산 전에
+    _attach_clauses(findings)
     return InspectionResult(overall=_overall(findings), findings=findings, photo=photo, scope=scope)
 
 
@@ -103,6 +134,8 @@ def judge(
         findings += holds
         if not holds:
             findings += _c_family(wide, wide_label, cfg)
+        _hold_if_unknown_blocks(findings, wide)
+    _attach_clauses(findings)
 
     return InspectionResult(overall=_overall(findings), findings=findings, close=close, wide=wide)
 

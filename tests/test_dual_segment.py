@@ -73,3 +73,81 @@ def test_class_mapping_by_name():
     assert class_mapping({0: "Dot", 1: "LINEAR"}, allowed) == {0: MaskClass.DOT, 1: MaskClass.LINEAR}
     with pytest.raises(ValueError):  # 장면 모델을 블록 자리에 잘못 넣은 경우
         class_mapping({0: "crosswalk", 1: "road"}, allowed)
+
+
+# ---------------------------------------------------------------- 5클래스 장면 모델 + 이중 검출
+
+from pipeline.dual_segment import SCENE_EXTRA_NAMES, MergeConfig, _to_masks  # noqa: E402
+
+SCENE = {MaskClass.CROSSWALK, MaskClass.ROAD}
+
+
+def test_scene5_mapping_skips_extra_classes():
+    names = {0: "crosswalk", 1: "road", 2: "alley", 3: "sidewalk", 4: "tactile"}
+    assert class_mapping(names, SCENE, skip=SCENE_EXTRA_NAMES) == {0: MaskClass.CROSSWALK, 1: MaskClass.ROAD}
+    assert class_mapping({0: "crosswalk", 1: "road"}, SCENE, skip=SCENE_EXTRA_NAMES) == \
+        {0: MaskClass.CROSSWALK, 1: MaskClass.ROAD}
+    with pytest.raises(ValueError):
+        class_mapping({0: "crosswalk", 1: "car"}, SCENE, skip=SCENE_EXTRA_NAMES)
+    with pytest.raises(ValueError):  # 블록 모델은 동작이 그대로 (skip 없음)
+        class_mapping({0: "linear", 1: "dot", 2: "tactile"}, {MaskClass.LINEAR, MaskClass.DOT})
+
+
+class _T:
+    def __init__(self, a):
+        self.a = a
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self.a
+
+    def int(self):
+        return _T(self.a.astype(int))
+
+
+class _Res:
+    """YOLO 결과 흉내: masks.data, boxes.cls, boxes.conf"""
+
+    def __init__(self, masks, cls, conf):
+        self.masks = type("M", (), {"data": _T(np.array(masks, np.float32))})
+        self.boxes = type("B", (), {"cls": _T(np.array(cls, float)), "conf": _T(np.array(conf, float))})
+
+
+def test_to_masks_skips_unmapped_and_collects_tactile():
+    m = lambda y0, y1: _rect(y0, y1, 0, W).astype(np.float32)
+    res = _Res([m(0, 100), m(100, 200), m(200, 300), m(300, 400)], [0, 2, 4, 4], [0.9, 0.8, 0.7, 0.6])
+    mapping = {0: MaskClass.CROSSWALK, 1: MaskClass.ROAD}
+    dets, tactile = _to_masks(res, mapping, H, W, frozenset({4}))
+    assert [d[1] for d in dets] == [MaskClass.CROSSWALK]  # alley(2)는 건너뜀, KeyError 없음
+    assert tactile[250, 10] and tactile[350, 10] and not tactile[50, 10]
+    dets, tactile = _to_masks(res, mapping, H, W)  # tactile 클래스가 없는 모델
+    assert tactile is None and len(dets) == 1
+
+
+def test_case2_block_outside_tactile_dropped():
+    tactile = _rect(300, 600, 360, 440)  # PATH 영역만 점자블록
+    lone = (_rect(400, 600, 600, 640), MaskClass.LINEAR, 0.95)  # 신뢰도가 높아도 tactile과 안 겹치면 버림
+    label, seg = merge_detections(_image(True), [CROSSWALK], [PATH, lone], PhotoKind.WIDE, tactile=tactile)
+    assert label[450, 400] == MaskClass.LINEAR
+    assert label[500, 620] == 0
+    assert seg.unknown_block_area_px == 0
+
+
+def test_case3_unknown_block_area():
+    tactile = _rect(320, 600, 100, 300)  # 점자블록 영역인데 블록 모델은 못 찾음
+    label, seg = merge_detections(_image(True), [CROSSWALK], [PATH], PhotoKind.WIDE, tactile=tactile)
+    assert seg.unknown_block_area_px > 0
+    small = _rect(500, 510, 100, 110)  # 0.5% 미만 덩어리는 무시
+    assert merge_detections(_image(True), [CROSSWALK], [PATH], PhotoKind.WIDE, tactile=small)[1].unknown_block_area_px == 0
+    cfg = MergeConfig(min_unknown_area=0.9)  # 기준값은 설정으로 조정
+    assert merge_detections(_image(True), [CROSSWALK], [PATH], PhotoKind.WIDE, cfg, tactile)[1].unknown_block_area_px == 0
+
+
+def test_no_tactile_class_behaves_as_before():
+    a_label, a_seg = merge_detections(_image(True), [CROSSWALK], [PATH, PAINT, CURB], PhotoKind.WIDE)
+    assert a_seg.unknown_block_area_px is None
+    assert a_label[450, 400] == MaskClass.LINEAR and a_label[175, 120] == MaskClass.CROSSWALK
+    b_label, _ = merge_detections(_image(True), [CROSSWALK], [PATH, PAINT, CURB], PhotoKind.WIDE, tactile=None)
+    assert np.array_equal(a_label, b_label)

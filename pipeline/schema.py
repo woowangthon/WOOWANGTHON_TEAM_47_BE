@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.2.0"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope)
+SCHEMA_VERSION = "0.3.1"  # 0.3.1: Segmentation.unknown_block_area_px (이중 검출) / 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope) / 0.3.0: 신고 위치·사진·처리 상태
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,10 @@ class Segmentation(BaseModel):
     )
     mean_confidence: Optional[float] = Field(
         None, description="블록 영역의 평균 신뢰도 0~1. H1(가림·그림자) 판정에 사용"
+    )
+    unknown_block_area_px: Optional[int] = Field(
+        None, description="장면 모델은 점자블록이라고 했지만 블록 모델이 못 찾은 '종류 모름 블록' 면적. "
+        "이중 검출(5클래스 장면 모델)일 때만 채움, 아니면 None. 0보다 크면 C4·C5 의심을 보류로 바꿈 (0.3.1)"
     )
 
 
@@ -184,6 +188,24 @@ class Finding(BaseModel):
     primary: bool = Field(True, description="C2와 C3가 함께 뜨면 C3는 primary=False (보조 표시)")
 
 
+class Location(BaseModel):
+    """신고 위치. 모두 선택 입력."""
+
+    address: Optional[str] = Field(None, max_length=200, description="주소 또는 장소 이름 (사용자 입력)")
+    memo: Optional[str] = Field(None, max_length=500, description="장소 설명 메모 (예: OO초 앞 횡단보도)")
+    lat: Optional[float] = Field(None, ge=-90, le=90, description="위도 (브라우저 위치 권한으로 받은 값)")
+    lng: Optional[float] = Field(None, ge=-180, le=180, description="경도")
+
+
+class ReportStatus(str, Enum):
+    """관리자 처리 상태. 화면 표시: 접수 / 확인 중 / 처리 완료 / 반려."""
+
+    RECEIVED = "received"
+    REVIEWING = "reviewing"
+    RESOLVED = "resolved"
+    REJECTED = "rejected"
+
+
 class InspectionResult(BaseModel):
     schema_version: str = SCHEMA_VERSION
     inspection_id: Optional[str] = None
@@ -194,5 +216,33 @@ class InspectionResult(BaseModel):
         default_factory=dict,
         description='계열별 판정 여부와 이유. 예: {"C": "판정", "M": "건너뜀 (블록이 작게 찍혀 ...)"}',
     )
+    location: Optional[Location] = Field(None, description="신고 위치 (0.3.0)")
+    photo_url: Optional[str] = Field(None, description="저장된 사진 주소 (API 상대 경로, 0.3.0)")
+    created_at: Optional[str] = Field(None, description="접수 시각 ISO 8601 (0.3.0)")
     close: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")
     wide: Optional[PhotoAnalysis] = Field(None, description="예전 사진 두 장 구조 (호환용)")
+
+
+class ReportSummary(BaseModel):
+    """관리자 목록 한 줄."""
+
+    inspection_id: str
+    created_at: Optional[str] = None
+    overall: Verdict
+    status: ReportStatus = ReportStatus.RECEIVED
+    codes: list[str] = Field(default_factory=list, description="'오류 의심' 판정 코드 (중복 제거)")
+    location: Optional[Location] = None
+    photo_url: Optional[str] = None
+
+
+class ReportDetail(ReportSummary):
+    """관리자 상세: 판정 결과 전체 + 처리 정보."""
+
+    admin_memo: Optional[str] = None
+    updated_at: Optional[str] = None
+    result: InspectionResult
+
+
+class ReportUpdate(BaseModel):
+    status: Optional[ReportStatus] = None
+    admin_memo: Optional[str] = Field(None, max_length=1000)

@@ -235,3 +235,21 @@ def test_rectify_without_crosswalk_does_not_crash():
 
     r = rectify_by_crosswalk(np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100), np.uint8))
     assert not r.ok and r.walk_vp is None
+
+
+def test_every_suspected_finding_has_clause():
+    """'오류 의심'에는 근거 조항이 붙는다 (시경 shape_rules M3 포함)."""
+    from pipeline.rules import judge_photo
+    from pipeline.rules.clauses import CLAUSES
+
+    assert all(CLAUSES[c] for c in ("M3", "M4", "C1", "C2", "C3", "C4", "C5", "C6"))
+    scenes = [synth.l_turn(dot_at_turn=False)[0], synth.road_straight()[0], synth.short_of_crosswalk()[0],
+              synth.side_crosswalk_no_turn()[0], synth.approach_crosswalk(entrance_dot=False)[0]]
+    seen = set()
+    for label in scenes:
+        r = judge_photo(analyze_label(label, PhotoKind.WIDE), label)
+        for f in r.findings:
+            if f.verdict == Verdict.SUSPECTED:
+                assert f.clause, f.code
+                seen.add(f.code)
+    assert {"M3", "C1", "C2", "C3", "C4"} <= seen
