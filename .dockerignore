@@ -1,0 +1,11 @@
+# 이미지에는 app/, pipeline/, requirements*, 선택한 가중치만 들어간다
+*
+!app/
+!pipeline/
+!requirements.txt
+!requirements-ml.txt
+!weights/*.pt
+
+**/__pycache__
+**/*.pyc
+.env
