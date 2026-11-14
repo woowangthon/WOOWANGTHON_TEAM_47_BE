@@ -101,7 +101,9 @@ def test_run_photo_and_api_single_upload(tmp_path, monkeypatch):
         res = c.post("/api/inspections", files={"photo": ("a.jpg", buf.tobytes(), "image/jpeg")})
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["schema_version"] == "0.2.0"
+        from pipeline.schema import SCHEMA_VERSION
+
+        assert body["schema_version"] == SCHEMA_VERSION
         assert body["scope"]["C"] == "판정"
         assert body["photo"] is not None and body["close"] is None and body["wide"] is None
         assert c.get(f"/api/inspections/{body['inspection_id']}").status_code == 200
