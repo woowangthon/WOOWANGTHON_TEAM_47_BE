@@ -107,3 +107,39 @@ def test_run_photo_and_api_single_upload(tmp_path, monkeypatch):
         assert body["scope"]["C"] == "판정"
         assert body["photo"] is not None and body["close"] is None and body["wide"] is None
         assert c.get(f"/api/inspections/{body['inspection_id']}").status_code == 200
+
+
+# ---------------------------------------------------------------- 종류 모름 블록 → C4·C5 보류
+
+
+def _codes_by(r, code):
+    return [f.verdict for f in r.findings if f.code == code]
+
+
+def test_unknown_blocks_turn_c4_suspected_into_hold():
+    label, _ = synth.approach_crosswalk(entrance_dot=False)  # 보정 없이 라벨로 C4 점형 누락
+    a = analyze_label(label, PhotoKind.WIDE, None, summarize(label, PhotoKind.WIDE))
+    assert Verdict.SUSPECTED in _codes_by(judge_photo(a, label), "C4")
+    a.segmentation.unknown_block_area_px = 5000
+    r = judge_photo(a, label)
+    assert _codes_by(r, "C4") == [Verdict.HOLD]
+    assert "읽지 못한 점자블록" in next(f.message for f in r.findings if f.code == "C4")
+    assert not any(f.code == "C4" and f.verdict == Verdict.SUSPECTED for f in r.findings)
+
+
+def test_unknown_blocks_turn_c5_into_hold_and_keep_others():
+    img, label, _ = synth.render_wide_scene(linear=False)  # C5 선형 유도 없음
+    a = analyze_label(label, PhotoKind.WIDE, img, summarize(label, PhotoKind.WIDE))
+    assert Verdict.SUSPECTED in _codes_by(judge_photo(a, label), "C5")
+    a.segmentation.unknown_block_area_px = 5000
+    r = judge_photo(a, label)
+    assert _codes_by(r, "C5") == [Verdict.HOLD] and r.overall == Verdict.HOLD
+    a.segmentation.unknown_block_area_px = 0  # 0이면 그대로
+    assert Verdict.SUSPECTED in _codes_by(judge_photo(a, label), "C5")
+
+
+def test_unknown_blocks_do_not_touch_c2():
+    label, _ = synth.road_straight()
+    a = analyze_label(label, PhotoKind.WIDE, None, summarize(label, PhotoKind.WIDE))
+    a.segmentation.unknown_block_area_px = 5000
+    assert Verdict.SUSPECTED in _codes_by(judge_photo(a, label), "C2")

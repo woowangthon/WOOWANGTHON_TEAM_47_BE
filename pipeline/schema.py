@@ -11,7 +11,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = "0.3.0"  # 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope) / 0.3.0: 신고 위치·사진·처리 상태
+SCHEMA_VERSION = "0.3.1"  # 0.3.1: Segmentation.unknown_block_area_px (이중 검출) / 0.1.1: px_per_m·role (C4) / 0.1.2: C5·C6, walk_vp / 0.2.0: 사진 한 장 (photo, scope) / 0.3.0: 신고 위치·사진·처리 상태
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,10 @@ class Segmentation(BaseModel):
     )
     mean_confidence: Optional[float] = Field(
         None, description="블록 영역의 평균 신뢰도 0~1. H1(가림·그림자) 판정에 사용"
+    )
+    unknown_block_area_px: Optional[int] = Field(
+        None, description="장면 모델은 점자블록이라고 했지만 블록 모델이 못 찾은 '종류 모름 블록' 면적. "
+        "이중 검출(5클래스 장면 모델)일 때만 채움, 아니면 None. 0보다 크면 C4·C5 의심을 보류로 바꿈 (0.3.1)"
     )
 
 
