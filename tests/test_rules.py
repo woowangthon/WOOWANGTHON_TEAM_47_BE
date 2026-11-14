@@ -149,3 +149,28 @@ def test_rectified_axis_matches_true_direction():
     assert rect.ok
     q = apply_h(np.array(rect.homography) @ meta["top_to_img"], np.array([[600.0, 1500], [600.0, 1000]]))
     assert angle_diff(rect.crosswalk_axis_deg, angle_std(*(q[1] - q[0]))) < 2
+
+
+# ---------------------------------------------------------------- 규칙위반케이스로 고친 것
+
+
+def test_path_along_curb_is_not_c1_normal():
+    """횡단보도 옆을 스쳐 지나가는 선형은 입구에 닿아도 정상이 아니다 (C3)."""
+    label, _ = synth.along_curb_past_crosswalk()
+    r = _wide(label)
+    assert "C1" not in _codes(r, Verdict.NORMAL)
+    assert "C3" in _codes(r, Verdict.SUSPECTED)
+
+
+def test_c4_entrance_without_dot_detected_without_rectification():
+    label, _ = synth.approach_crosswalk(entrance_dot=False)
+    r = _wide(label)  # 사진 없이 라벨만 → 시점 보정 실패(H2)
+    assert "H2" in _codes(r, Verdict.HOLD)
+    assert "C4" in _codes(r, Verdict.SUSPECTED)
+
+
+def test_c4_entrance_with_dot_not_flagged_without_rectification():
+    label, _ = synth.approach_crosswalk(entrance_dot=True)
+    r = _wide(label)
+    assert "C4" not in _codes(r, Verdict.SUSPECTED)
+    assert "C1" in _codes(r, Verdict.NORMAL)

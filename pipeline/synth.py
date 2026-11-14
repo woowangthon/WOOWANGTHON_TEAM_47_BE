@@ -60,15 +60,30 @@ def t_branch(dot_at_branch: bool = True) -> tuple[np.ndarray, dict]:
     return lab, {"ends": 3, "turns": 0, "branches": 1, "m3": "normal" if dot_at_branch else "suspected"}
 
 
-def approach_crosswalk(with_road: bool = True) -> tuple[np.ndarray, dict]:
-    """넓은 사진: 선형 경로 → 진입부 점형 → 횡단보도. 정상 장면."""
+def approach_crosswalk(with_road: bool = True, entrance_dot: bool = True) -> tuple[np.ndarray, dict]:
+    """넓은 사진: 선형 경로 → 진입부 점형 → 횡단보도. 정상 장면.
+
+    entrance_dot=False 면 진입부도 선형 (점형 누락, C4).
+    """
     lab = _canvas()
     if with_road:
         lab[:200, :] = int(MaskClass.ROAD)
     lab[:200, 240:400] = int(MaskClass.CROSSWALK)
     _line(lab, (320, 620), (320, 250), MaskClass.LINEAR)
-    lab[200:260, 260:380] = int(MaskClass.DOT)
-    return lab, {"ends": 2, "turns": 0, "branches": 0}
+    lab[200:260, 260:380] = int(MaskClass.DOT if entrance_dot else MaskClass.LINEAR)
+    return lab, {"ends": 2, "turns": 0, "branches": 0, "c4": entrance_dot}
+
+
+def along_curb_past_crosswalk() -> tuple[np.ndarray, dict]:
+    """넓은 사진: 선형이 연석을 따라 횡단보도 옆을 스쳐 지나감 (횡단보도로 들어가는 안내 없음). C3.
+
+    블록이 횡단보도 입구 거리 안에 있어 예전 기준으로는 C1 정상이 됐던 경우 (규칙위반케이스 3·5).
+    """
+    lab = _canvas()
+    lab[:200, :] = int(MaskClass.ROAD)
+    lab[:200, 240:400] = int(MaskClass.CROSSWALK)
+    _line(lab, (20, 230), (620, 230), MaskClass.LINEAR)
+    return lab, {"c3": True}
 
 
 def road_straight(curb_link: bool = False) -> tuple[np.ndarray, dict]:

@@ -42,7 +42,10 @@ def judge(
                 findings += partial
             else:
                 h2 = hold.check_h2(wide)
-                findings += h2 or c_rules.check_c4(wide)
+                if h2:  # 보정 실패: 방향은 보류, 점형 유무만 라벨로 확인
+                    findings += h2 + c_rules.check_c4_from_label(wide, wide_label)
+                else:
+                    findings += c_rules.check_c4(wide)
 
     return InspectionResult(overall=_overall(findings), findings=findings, close=close, wide=wide)
 
